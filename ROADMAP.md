@@ -11,17 +11,7 @@ The target baseline is **at-least-once execution** with idempotent handlers.
 - Treat retries, cancellation, deduplication, and observability as core behavior.
 - Start with one process, but avoid designs that prevent multiple workers later.
 
-## Milestone 0 — Foundation (current)
-
-- [x] Create the .NET solution, core library, worker host, and test project.
-- [x] Enable nullable reference types, analyzers, and warnings as errors.
-- [x] Add the initial job model and lifecycle states.
-- [ ] Record architecture decisions for delivery guarantees and persistence.
-- [ ] Add CI for restore, build, test, formatting, and dependency auditing.
-
-Exit criterion: a clean build and test run on a fresh checkout.
-
-## Milestone 1 — In-memory MVP
+## Milestone 1 — In-memory MVP (current)
 
 - [ ] Define enqueue, schedule, claim, complete, fail, and cancel contracts.
 - [ ] Implement a concurrency-safe in-memory store.
