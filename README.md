@@ -2,9 +2,10 @@
 
 A lightweight, reliable job queue and scheduler for .NET.
 
-The project is at the foundation stage. The initial goal is a small in-process API
-with clear delivery semantics, followed by durable storage and horizontally scalable
+The foundation milestone is complete. The current goal is a small in-process API with
+clear delivery semantics, followed by durable storage and horizontally scalable
 workers. See [ROADMAP.md](ROADMAP.md) for scope and milestones.
+Completed work is recorded in [CHANGELOG.MD](CHANGELOG.MD).
 
 ## Repository layout
 
