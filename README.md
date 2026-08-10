@@ -25,6 +25,20 @@ dotnet build --no-restore
 dotnet test --no-build
 ```
 
+## Agentic development workflow
+
+Repository instructions live in `AGENTS.md`; reusable workflows live under
+`.agents/skills`. Invoke `$implement`, `$review`, or `$release-docs` in Codex for the
+corresponding task. Local and CI quality gates share one command:
+
+```powershell
+dotnet run --project tools/JobScheduler.Harness -- implement
+```
+
+The cross-platform .NET harness verifies formatting, performs a Release build, runs all
+discovered unit and integration tests, enforces at least 70% line coverage, and audits
+NuGet packages.
+
 ## Current guarantees
 
 No stable public API or delivery guarantee is promised yet. The intended baseline is

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Docs"
+  short_description: "Finalize release docs and project instructions"
+  default_prompt: "Use $release-docs to finalize documentation for the upcoming release."

@@ -24,17 +24,5 @@ jobs:
           cache: true
           cache-dependency-path: '**/*.csproj'
 
-      - name: Restore dependencies
-        run: dotnet restore JobScheduler.slnx
-
-      - name: Verify formatting
-        run: dotnet format JobScheduler.slnx --no-restore --verify-no-changes
-
-      - name: Build
-        run: dotnet build JobScheduler.slnx --configuration Release --no-restore
-
-      - name: Test
-        run: dotnet test JobScheduler.slnx --configuration Release --no-build
-
-      - name: Audit dependencies
-        run: dotnet package list --project JobScheduler.slnx --vulnerable --include-transitive --no-restore
+      - name: Run repository harness
+        run: dotnet run --project tools/JobScheduler.Harness -- implement
