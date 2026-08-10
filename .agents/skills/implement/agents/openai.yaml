@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement"
+  short_description: "Implement changes behind repository quality gates"
+  default_prompt: "Use $implement to implement this change and pass all quality gates."

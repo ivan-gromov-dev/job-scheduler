@@ -7,6 +7,11 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ### Added
 
+- Repository agentic workflow with concise `AGENTS.md` guidance and repo-scoped
+  `implement`, `review`, and `release-docs` skills.
+- Cross-platform .NET harness shared by local development and CI for formatting,
+  Release builds, unit and integration tests, a 70% line-coverage gate, and dependency
+  auditing.
 - .NET 10 solution with separate core library, worker host, and xUnit test project.
 - Initial job model with pending, processing, succeeded, failed, and dead-lettered
   lifecycle states.
