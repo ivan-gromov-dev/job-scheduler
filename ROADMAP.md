@@ -11,19 +11,19 @@ The target baseline is **at-least-once execution** with idempotent handlers.
 - Treat retries, cancellation, deduplication, and observability as core behavior.
 - Start with one process, but avoid designs that prevent multiple workers later.
 
-## Milestone 1 — In-memory MVP (current)
+## Milestone 1 — In-memory MVP
 
-- [ ] Define enqueue, schedule, claim, complete, fail, and cancel contracts.
-- [ ] Implement a concurrency-safe in-memory store.
-- [ ] Add typed job handlers and dependency-injection registration.
-- [ ] Implement a worker loop with bounded concurrency and graceful shutdown.
-- [ ] Support delayed jobs and deterministic tests through `TimeProvider`.
-- [ ] Document lifecycle transitions and at-least-once semantics.
+- [x] Define enqueue, schedule, claim, complete, fail, and cancel contracts.
+- [x] Implement a concurrency-safe in-memory store.
+- [x] Add typed job handlers and dependency-injection registration.
+- [x] Implement a worker loop with bounded concurrency and graceful shutdown.
+- [x] Support delayed jobs and deterministic tests through `TimeProvider`.
+- [x] Document lifecycle transitions and at-least-once semantics.
 
 Exit criterion: an application can enqueue immediate or delayed jobs and process them
 reliably within one process, with complete unit and integration coverage.
 
-## Milestone 2 — Failure handling
+## Milestone 2 — Failure handling (current)
 
 - [ ] Add configurable retry policies with exponential backoff and jitter.
 - [ ] Distinguish transient, permanent, timeout, and cancellation failures.

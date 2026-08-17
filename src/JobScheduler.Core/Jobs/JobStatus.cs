@@ -6,5 +6,6 @@ public enum JobStatus
     Processing,
     Succeeded,
     Failed,
+    Canceled,
     DeadLettered,
 }

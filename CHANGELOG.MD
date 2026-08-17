@@ -7,6 +7,11 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ### Added
 
+- In-memory Milestone 1 API for enqueueing, scheduling, leasing, completing, failing,
+  and canceling jobs with concurrency-safe lifecycle transitions.
+- Typed JSON job handlers, dependency-injection registration, and an in-process worker
+  with bounded concurrency, graceful shutdown, delayed execution, and lease recovery.
+- Deterministic clock-based unit tests and an end-to-end worker integration test.
 - Repository agentic workflow with concise `AGENTS.md` guidance and repo-scoped
   `implement`, `review`, and `release-docs` skills.
 - Cross-platform .NET harness shared by local development and CI for formatting,

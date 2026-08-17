@@ -26,4 +26,16 @@ public sealed class JobTests
 
         Assert.Throws<ArgumentException>(action);
     }
+
+    [Fact]
+    public void CreateNormalizesTimestampsToUtc()
+    {
+        var local = new DateTimeOffset(2026, 8, 17, 12, 0, 0, TimeSpan.FromHours(2));
+
+        var job = Job.Create("test", "{}", local, local.AddHours(1));
+
+        Assert.Equal(TimeSpan.Zero, job.EnqueuedAt.Offset);
+        Assert.Equal(TimeSpan.Zero, job.ScheduledAt.Offset);
+        Assert.Equal(local.UtcDateTime, job.EnqueuedAt.UtcDateTime);
+    }
 }
