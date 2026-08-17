@@ -1,7 +1,7 @@
 using JobScheduler.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddHostedService<Worker>();
+builder.Services.AddJobWorker();
 
 var host = builder.Build();
 host.Run();

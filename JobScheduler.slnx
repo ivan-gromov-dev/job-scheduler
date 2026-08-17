@@ -5,6 +5,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/JobScheduler.Core.Tests/JobScheduler.Core.Tests.csproj" />
+    <Project Path="tests/JobScheduler.IntegrationTests/JobScheduler.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/JobScheduler.Harness/JobScheduler.Harness.csproj" />

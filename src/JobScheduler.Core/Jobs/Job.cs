@@ -16,6 +16,8 @@ public sealed record Job
 
     public int Attempt { get; init; }
 
+    public string? Failure { get; init; }
+
     public static Job Create(
         string type,
         string payload,
@@ -30,8 +32,8 @@ public sealed record Job
             Id = Guid.NewGuid(),
             Type = type,
             Payload = payload,
-            EnqueuedAt = now,
-            ScheduledAt = scheduledAt ?? now,
+            EnqueuedAt = now.ToUniversalTime(),
+            ScheduledAt = (scheduledAt ?? now).ToUniversalTime(),
         };
     }
 }

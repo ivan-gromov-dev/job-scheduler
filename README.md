@@ -2,9 +2,9 @@
 
 A lightweight, reliable job queue and scheduler for .NET.
 
-The foundation milestone is complete. The current goal is a small in-process API with
-clear delivery semantics, followed by durable storage and horizontally scalable
-workers. See [ROADMAP.md](ROADMAP.md) for scope and milestones.
+The in-memory MVP is complete. The current goal is deterministic failure handling,
+followed by durable storage and horizontally scalable workers. See
+[ROADMAP.md](ROADMAP.md) for scope and milestones.
 Completed work is recorded in [CHANGELOG.MD](CHANGELOG.MD).
 
 ## Repository layout
@@ -41,5 +41,26 @@ NuGet packages.
 
 ## Current guarantees
 
-No stable public API or delivery guarantee is promised yet. The intended baseline is
-at-least-once execution; handlers must therefore be idempotent.
+The in-process worker provides **at-least-once execution**. Claiming moves a due
+pending job to `Processing` and assigns a time-limited lease. Successful dispatch
+moves it to `Succeeded`; an exception moves it to `Failed`. A pending job may instead
+be moved to `Canceled`. If a process stops after claiming but before recording an
+outcome, the expired lease makes the job claimable again and increments its attempt.
+Handlers must therefore be idempotent.
+
+Delayed jobs remain `Pending` until their UTC `ScheduledAt` value is reached. The
+store and worker receive a `TimeProvider`, so clock-dependent behavior can be tested
+deterministically. Graceful shutdown stops new claims and lets the host cancel active
+handlers; canceled executions retain their lease for later recovery.
+
+## In-process usage
+
+Register the worker and each typed handler with dependency injection:
+
+```csharp
+builder.Services.AddJobHandler<SendEmail, SendEmailHandler>();
+builder.Services.AddJobWorker(options => options.MaxConcurrency = 4);
+```
+
+Resolve `IJobClient` to call `EnqueueAsync` for immediate work or `ScheduleAsync` with
+a UTC `DateTimeOffset` for delayed work. The public API is not yet declared stable.
