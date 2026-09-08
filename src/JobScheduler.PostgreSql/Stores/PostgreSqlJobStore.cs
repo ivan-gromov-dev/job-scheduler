@@ -108,7 +108,7 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
         const string sql = """
             WITH ownership AS (SELECT pg_try_advisory_xact_lock(1246705014) AS acquired),
             victims AS (SELECT j.id FROM job_scheduler_jobs j, ownership
-              WHERE ownership.acquired AND status=4 AND completed_at < $1
+              WHERE ownership.acquired AND status=$3 AND completed_at < $1
               ORDER BY completed_at, j.id LIMIT $2 FOR UPDATE OF j SKIP LOCKED),
             deleted AS (DELETE FROM job_scheduler_jobs j USING victims WHERE j.id=victims.id RETURNING 1)
             SELECT ownership.acquired, (SELECT count(*) FROM deleted) FROM ownership
@@ -116,7 +116,7 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue(completedBefore.ToUniversalTime()); command.Parameters.AddWithValue(batchSize);
+        command.Parameters.AddWithValue(completedBefore.ToUniversalTime()); command.Parameters.AddWithValue(batchSize); command.Parameters.AddWithValue((short)JobStatus.DeadLettered);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken); await reader.ReadAsync(cancellationToken);
         var result = new DeadLetterMaintenanceResult(reader.GetBoolean(0), checked((int)reader.GetInt64(1)));
         await reader.DisposeAsync(); await transaction.CommitAsync(cancellationToken); return result;
