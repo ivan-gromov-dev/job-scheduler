@@ -1,4 +1,5 @@
 using JobScheduler.Worker;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -16,6 +17,8 @@ public static class JobWorkerServiceCollectionExtensions
         }
 
         services.AddHostedService<JobWorker>();
+        services.TryAddSingleton<JobWorkerState>();
+        services.AddHealthChecks().AddCheck<JobWorkerHealthCheck>("job_scheduler_worker", tags: ["ready"]);
         return services;
     }
 

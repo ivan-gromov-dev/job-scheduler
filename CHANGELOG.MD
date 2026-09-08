@@ -7,6 +7,16 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ### Added
 
+- Operational job metadata for queues, priorities, and correlation identifiers;
+  bounded queues provide explicit backpressure and queue-aware claiming supports
+  per-queue worker concurrency.
+- Structured execution logs plus OpenTelemetry-compatible activities and metrics for
+  queue lag, throughput, duration, retries, and dead letters.
+- Worker readiness health checks and graceful draining that stops claims while
+  allowing active handlers to finish.
+- Provider-neutral `IJobAdministration` inspection, filtering, cancellation, and
+  dead-letter replay API, implemented by both in-memory and PostgreSQL stores.
+
 - Durable one-off and recurring schedules with five-field cron expressions, explicit
   time zones, deterministic daylight-saving behavior, and skip, coalesce, or bounded
   catch-up misfire policies.

@@ -54,17 +54,17 @@ losing accepted jobs.
 
 Exit criterion: recurring jobs behave predictably across restarts and clock changes.
 
-## Milestone 5 — Operations and observability (current)
+## Milestone 5 — Operations and observability
 
-- [ ] Add structured logs with job, attempt, queue, and correlation identifiers.
-- [ ] Add OpenTelemetry traces and metrics for latency, throughput, retries, and lag.
-- [ ] Add health/readiness checks and graceful draining.
-- [ ] Add queue limits, backpressure, priorities, and per-queue concurrency controls.
-- [ ] Provide an administrative API/CLI for inspection, cancellation, and replay.
+- [x] Add structured logs with job, attempt, queue, and correlation identifiers.
+- [x] Add OpenTelemetry traces and metrics for latency, throughput, retries, and lag.
+- [x] Add health/readiness checks and graceful draining.
+- [x] Add queue limits, backpressure, priorities, and per-queue concurrency controls.
+- [x] Provide an administrative API/CLI for inspection, cancellation, and replay.
 
 Exit criterion: operators can diagnose behavior and safely control a running system.
 
-## Milestone 6 — Packaging and release
+## Milestone 6 — Packaging and release (current)
 
 - [ ] Stabilize and document the public API.
 - [ ] Add compatibility, performance, and soak-test suites.

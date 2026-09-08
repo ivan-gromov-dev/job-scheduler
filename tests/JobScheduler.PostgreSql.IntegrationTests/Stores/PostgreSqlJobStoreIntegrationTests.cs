@@ -24,6 +24,17 @@ public sealed class PostgreSqlJobStoreIntegrationTests
         using var second = new PostgreSqlJobStore(dataSource, options, migrators[1], clock);
 
         Assert.Null(await first.GetAsync(Guid.NewGuid()));
+        var low = await first.EnqueueAsync("priority", "low", new JobEnqueueOptions { Queue = "operations", Priority = 1, MaxQueueDepth = 2 });
+        var high = await first.EnqueueAsync("priority", "high", new JobEnqueueOptions { Queue = "operations", Priority = 9, CorrelationId = "trace-1", MaxQueueDepth = 2 });
+        await Assert.ThrowsAsync<QueueFullException>(() => first.EnqueueAsync("priority", "full", new JobEnqueueOptions { Queue = "operations", MaxQueueDepth = 2 }).AsTask());
+        var highLease = await first.ClaimAsync(TimeSpan.FromMinutes(1), ["operations"]);
+        Assert.Equal(high.Id, highLease!.Job.Id);
+        Assert.Equal("trace-1", highLease.Job.CorrelationId);
+        Assert.True(await first.CompleteAsync(highLease));
+        var listed = await first.ListAsync(new JobQuery { Queue = "operations", Status = JobStatus.Pending });
+        Assert.Equal(low.Id, Assert.Single(listed).Id);
+        var lowLease = await first.ClaimAsync(TimeSpan.FromMinutes(1), ["operations"]);
+        Assert.True(await first.CompleteAsync(lowLease!));
         var duplicate = await first.EnqueueAsync("deduplicated", "first", new JobEnqueueOptions { DeduplicationKey = "one" });
         var coalesced = await second.EnqueueAsync("deduplicated", "second", new JobEnqueueOptions { DeduplicationKey = "one" });
         Assert.Equal(duplicate.Id, coalesced.Id);

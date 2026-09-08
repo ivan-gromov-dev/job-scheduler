@@ -3,7 +3,7 @@
 A lightweight, reliable job queue and scheduler for .NET.
 
 The worker supports in-memory and durable PostgreSQL storage. The current goal is
-operations and observability. See
+packaging and release. See
 [ROADMAP.md](ROADMAP.md) for scope and milestones.
 Completed work is recorded in [CHANGELOG.MD](CHANGELOG.MD).
 
@@ -59,8 +59,8 @@ its attempt. Handlers must therefore be idempotent.
 
 Delayed jobs remain `Pending` until their UTC `ScheduledAt` value is reached. The
 store and worker receive a `TimeProvider`, so clock-dependent behavior can be tested
-deterministically. Graceful shutdown stops new claims and lets the host cancel active
-handlers; canceled executions retain their lease for later recovery.
+deterministically. Graceful shutdown marks readiness unhealthy, stops new claims, and
+lets active handlers finish within the host shutdown timeout.
 
 Recurring schedules use standard five-field cron syntax (`minute hour day-of-month
 month day-of-week`) and an explicit `TimeZoneInfo` identifier. Occurrences are found
@@ -76,13 +76,27 @@ Register the worker and each typed handler with dependency injection:
 
 ```csharp
 builder.Services.AddJobHandler<SendEmail, SendEmailHandler>();
-builder.Services.AddJobWorker(options => options.MaxConcurrency = 4);
+builder.Services.AddJobScheduler(queues => queues.Capacities["email"] = 10_000);
+builder.Services.AddJobWorker(options =>
+{
+    options.QueueConcurrency["email"] = 4;
+    options.QueueConcurrency["reports"] = 1;
+});
 builder.Services.AddScheduleMaterializer();
 ```
 
 Resolve `IJobClient` to call `EnqueueAsync` for immediate work or `ScheduleAsync` with
 a UTC `DateTimeOffset` for delayed work. Pass `JobEnqueueOptions.DeduplicationKey` to
 coalesce active or already successful work for the same job type and application key.
+The same options select a queue and priority, carry a correlation identifier, and can
+set `MaxQueueDepth`; enqueue throws `QueueFullException` when that queue is full.
+Resolve `IJobAdministration` to inspect or filter jobs, cancel pending work, and replay
+dead letters. The `job_scheduler_worker` health check is tagged `ready`.
+
+Subscribe an OpenTelemetry SDK to the `JobScheduler` activity source and meter. It
+emits execution spans and instruments for claimed/completed throughput, retries, dead
+letters, handler duration, and scheduling lag. Execution logs use structured `JobId`,
+`Attempt`, `Queue`, and `CorrelationId` properties.
 Resolve `IScheduleClient` for one-off or recurring typed jobs, and `IScheduleStore` to
 inspect, pause, resume, update, or delete schedules. PostgreSQL materialization locks
 due schedule rows and writes jobs plus the next occurrence in one transaction, so
