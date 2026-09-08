@@ -9,7 +9,47 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+      - name: Restore
+        run: dotnet restore JobScheduler.slnx
+      - name: Verify formatting
+        run: dotnet format JobScheduler.slnx --no-restore --verify-no-changes
+      - name: Build
+        run: dotnet build JobScheduler.slnx --configuration Release --no-restore
+      - name: Audit dependencies
+        run: dotnet package list --project JobScheduler.slnx --vulnerable --include-transitive --no-restore
+
+  unit-tests:
+    name: Unit Tests
+    needs: build
+    uses: ./.github/workflows/test-project.yml
+    with:
+      project: tests/JobScheduler.Core.Tests/JobScheduler.Core.Tests.csproj
+      artifact: coverage-unit
+
+  worker-integration-tests:
+    name: Worker Integration Tests
+    needs: build
+    uses: ./.github/workflows/test-project.yml
+    with:
+      project: tests/JobScheduler.IntegrationTests/JobScheduler.IntegrationTests.csproj
+      artifact: coverage-worker-integration
+
+  postgresql-integration-tests:
+    name: PostgreSQL Integration Tests
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -28,17 +68,66 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
           cache: true
           cache-dependency-path: '**/*.csproj'
+      - name: Run PostgreSQL integration tests
+        run: >-
+          dotnet test tests/JobScheduler.PostgreSql.IntegrationTests/JobScheduler.PostgreSql.IntegrationTests.csproj
+          --configuration Release --collect:"XPlat Code Coverage"
+          --results-directory artifacts/coverage/postgresql-integration
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-postgresql-integration
+          path: artifacts/coverage/**/coverage.cobertura.xml
+          if-no-files-found: error
 
-      - name: Run repository harness
-        run: dotnet run --project tools/JobScheduler.Harness -- implement
+  coverage:
+    name: Coverage
+    needs: [unit-tests, worker-integration-tests, postgresql-integration-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Download coverage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: artifacts/coverage
+      - name: Enforce aggregate coverage
+        run: >-
+          dotnet run --project tools/JobScheduler.Harness --
+          coverage --results-root artifacts/coverage --expected-reports 3
+
+  ci-success:
+    name: CI Success
+    if: always()
+    needs: [build, unit-tests, worker-integration-tests, postgresql-integration-tests, coverage]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all CI jobs passed
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          WORKER_RESULT: ${{ needs.worker-integration-tests.result }}
+          POSTGRESQL_RESULT: ${{ needs.postgresql-integration-tests.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+        run: |
+          test "$BUILD_RESULT" = "success"
+          test "$UNIT_RESULT" = "success"
+          test "$WORKER_RESULT" = "success"
+          test "$POSTGRESQL_RESULT" = "success"
+          test "$COVERAGE_RESULT" = "success"

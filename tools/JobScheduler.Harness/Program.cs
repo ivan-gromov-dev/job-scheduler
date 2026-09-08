@@ -14,9 +14,19 @@ internal static class Harness
         {
             var options = HarnessOptions.Parse(args);
             var root = FindRepositoryRoot(Environment.CurrentDirectory);
+
+            if (options.Mode == "coverage")
+            {
+                VerifyCoverage(
+                    Path.GetFullPath(options.ResultsRoot!, root),
+                    options.ExpectedReports,
+                    options.CoverageThreshold);
+                Console.WriteLine("coverage harness passed.");
+                return 0;
+            }
+
             var solution = Path.Combine(root, "JobScheduler.slnx");
             var dotnet = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet";
-
             if (!options.NoRestore)
             {
                 await RunDotNetAsync(dotnet, root, "restore", solution);
@@ -199,15 +209,20 @@ internal static class Harness
     private static string QuoteForDisplay(string value) =>
         value.Contains(' ', StringComparison.Ordinal) ? $"\"{value}\"" : value;
 
-    private sealed record HarnessOptions(string Mode, int CoverageThreshold, bool NoRestore)
+    private sealed record HarnessOptions(
+        string Mode,
+        int CoverageThreshold,
+        bool NoRestore,
+        string? ResultsRoot,
+        int ExpectedReports)
     {
         public static HarnessOptions Parse(string[] arguments)
         {
             var mode = arguments.FirstOrDefault(argument => !argument.StartsWith("--", StringComparison.Ordinal))
                 ?? "implement";
-            if (mode is not ("implement" or "review"))
+            if (mode is not ("implement" or "review" or "coverage"))
             {
-                throw new ArgumentException("Mode must be 'implement' or 'review'.");
+                throw new ArgumentException("Mode must be 'implement', 'review', or 'coverage'.");
             }
 
             var threshold = DefaultCoverageThreshold;
@@ -222,7 +237,30 @@ internal static class Harness
                 }
             }
 
-            return new HarnessOptions(mode, threshold, arguments.Contains("--no-restore", StringComparer.Ordinal));
+            var resultsRoot = ReadOption(arguments, "--results-root");
+            var expectedReportsText = ReadOption(arguments, "--expected-reports");
+            var expectedReports = 0;
+            if (mode == "coverage" &&
+                (string.IsNullOrWhiteSpace(resultsRoot) ||
+                 !int.TryParse(expectedReportsText, out expectedReports) ||
+                 expectedReports < 1))
+            {
+                throw new ArgumentException(
+                    "Coverage mode requires --results-root and a positive --expected-reports value.");
+            }
+
+            return new HarnessOptions(
+                mode,
+                threshold,
+                arguments.Contains("--no-restore", StringComparer.Ordinal),
+                resultsRoot,
+                expectedReports);
+        }
+
+        private static string? ReadOption(string[] arguments, string name)
+        {
+            var index = Array.IndexOf(arguments, name);
+            return index >= 0 && index + 1 < arguments.Length ? arguments[index + 1] : null;
         }
     }
 }
