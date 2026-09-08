@@ -6,6 +6,7 @@ namespace JobScheduler.PostgreSql;
 public sealed class JobSchedulerDbContext(NpgsqlDataSource dataSource) : DbContext
 {
     internal DbSet<JobEntity> Jobs => Set<JobEntity>();
+    internal DbSet<ScheduleEntity> Schedules => Set<ScheduleEntity>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) => optionsBuilder.UseNpgsql(dataSource);
 
@@ -32,5 +33,15 @@ public sealed class JobSchedulerDbContext(NpgsqlDataSource dataSource) : DbConte
         job.HasIndex(x => new { x.CompletedAt, x.Id }, "ix_job_scheduler_jobs_dead_letters").HasFilter("status = 5");
         job.HasIndex(x => new { x.Type, x.DeduplicationKey }, "ux_job_scheduler_jobs_deduplication").IsUnique()
             .HasFilter("deduplication_key IS NOT NULL AND status IN (0, 1, 2)");
+
+        var schedule = modelBuilder.Entity<ScheduleEntity>();
+        schedule.ToTable("job_scheduler_schedules");
+        schedule.HasKey(x => x.Id).HasName("pk_job_scheduler_schedules");
+        schedule.Property(x => x.Id).HasColumnName("id"); schedule.Property(x => x.JobType).HasColumnName("job_type");
+        schedule.Property(x => x.Payload).HasColumnName("payload"); schedule.Property(x => x.CronExpression).HasColumnName("cron_expression");
+        schedule.Property(x => x.TimeZoneId).HasColumnName("time_zone_id"); schedule.Property(x => x.MisfirePolicy).HasColumnName("misfire_policy").HasConversion<short>();
+        schedule.Property(x => x.NextOccurrence).HasColumnName("next_occurrence"); schedule.Property(x => x.IsPaused).HasColumnName("is_paused");
+        schedule.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
+        schedule.HasIndex(x => new { x.NextOccurrence, x.Id }, "ix_job_scheduler_schedules_due").HasFilter("is_paused = false");
     }
 }

@@ -18,4 +18,15 @@ public static class JobWorkerServiceCollectionExtensions
         services.AddHostedService<JobWorker>();
         return services;
     }
+
+    public static IServiceCollection AddScheduleMaterializer(
+        this IServiceCollection services,
+        Action<ScheduleMaterializerOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddJobScheduler();
+        if (configure is not null) services.Configure(configure);
+        services.AddHostedService<ScheduleMaterializer>();
+        return services;
+    }
 }
