@@ -16,4 +16,5 @@ public sealed record Schedule
     public int Priority { get; init; }
     public string? DeduplicationKey { get; init; }
     public string? CorrelationId { get; init; }
+    public IReadOnlyList<ScheduleMaterialization> MaterializationHistory { get; init; } = [];
 }

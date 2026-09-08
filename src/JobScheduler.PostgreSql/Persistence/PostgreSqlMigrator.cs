@@ -21,4 +21,19 @@ public sealed class PostgreSqlMigrator(NpgsqlDataSource dataSource)
             await context.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_unlock({AdvisoryLockId})", cancellationToken);
         }
     }
+
+    public async Task ValidateAsync(CancellationToken cancellationToken = default)
+    {
+        await using var context = new JobSchedulerDbContext(dataSource);
+        if (!await context.Database.CanConnectAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("The job scheduler database is unavailable.");
+        }
+
+        var pending = (await context.Database.GetPendingMigrationsAsync(cancellationToken)).ToArray();
+        if (pending.Length != 0)
+        {
+            throw new InvalidOperationException($"The job scheduler schema is missing or incompatible. Pending migrations: {string.Join(", ", pending)}.");
+        }
+    }
 }

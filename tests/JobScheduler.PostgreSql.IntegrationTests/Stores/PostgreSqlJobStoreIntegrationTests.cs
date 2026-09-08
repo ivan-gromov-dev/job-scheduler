@@ -17,7 +17,9 @@ public sealed class PostgreSqlJobStoreIntegrationTests
         await ResetAsync(dataSource);
         var clock = new MutableTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var migrators = Enumerable.Range(0, 4).Select(_ => new PostgreSqlMigrator(dataSource)).ToArray();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => migrators[0].ValidateAsync());
         await Task.WhenAll(migrators.Select(x => x.MigrateAsync()));
+        await migrators[0].ValidateAsync();
         await Task.WhenAll(migrators.Select(x => x.MigrateAsync()));
         var options = new PostgreSqlJobStoreOptions { ConnectionString = connectionString, AutoMigrate = false };
         using var first = new PostgreSqlJobStore(dataSource, options, migrators[0], clock);
@@ -38,6 +40,9 @@ public sealed class PostgreSqlJobStoreIntegrationTests
         Assert.NotNull(completedAttempt.FinishedAt);
         var listed = await first.ListAsync(new JobQuery { Queue = "operations", Status = JobStatus.Pending });
         Assert.Equal(low.Id, Assert.Single(listed).Id);
+        var firstPage = await first.ListAsync(new JobQuery { Queue = "operations", Type = "priority", CorrelationId = null, EnqueuedFrom = clock.GetUtcNow(), EnqueuedThrough = clock.GetUtcNow(), Limit = 1 });
+        var secondPage = await first.ListAsync(new JobQuery { Queue = "operations", Type = "priority", Cursor = JobCursor.Encode(Assert.Single(firstPage)), Limit = 1 });
+        Assert.NotEqual(firstPage[0].Id, Assert.Single(secondPage).Id);
         var lowLease = await first.ClaimAsync(TimeSpan.FromMinutes(1), ["operations"]);
         Assert.True(await first.CompleteAsync(lowLease!));
         var duplicate = await first.EnqueueAsync("deduplicated", "first", new JobEnqueueOptions { DeduplicationKey = "one" });
@@ -116,6 +121,13 @@ public sealed class PostgreSqlJobStoreIntegrationTests
 
         var counts = await Task.WhenAll(first.MaterializeDueAsync(clock.GetUtcNow().AddHours(2).AddMinutes(1)).AsTask(), second.MaterializeDueAsync(clock.GetUtcNow().AddHours(2).AddMinutes(1)).AsTask());
         Assert.Equal(3, counts.Sum());
+        var inspected = await first.GetAsync(schedule.Id);
+        Assert.Equal(3, inspected!.MaterializationHistory.Count);
+        var page = await second.ListAsync(new ScheduleQuery { JobType = "hourly", Queue = "scheduled", CorrelationId = "schedule-trace", Limit = 1 });
+        Assert.Equal(schedule.Id, Assert.Single(page.Items).Id);
+        var manuallyTriggered = await second.TriggerAsync(schedule.Id);
+        Assert.NotNull(manuallyTriggered);
+        Assert.Equal(4, (await first.GetAsync(schedule.Id))!.MaterializationHistory.Count);
         Assert.True(await first.PauseAsync(schedule.Id));
         Assert.True(await second.ResumeAsync(schedule.Id));
         Assert.NotNull(await first.UpdateAsync(schedule.Id, new ScheduleOptions { RunAt = clock.GetUtcNow().AddDays(1) }));
@@ -125,7 +137,7 @@ public sealed class PostgreSqlJobStoreIntegrationTests
         clock.Advance(TimeSpan.FromHours(3));
         var claimed = new List<JobLease>();
         while (await jobs.ClaimAsync(TimeSpan.FromMinutes(1)) is { } lease) { claimed.Add(lease); await jobs.CompleteAsync(lease); }
-        Assert.Equal(3, claimed.Count);
+        Assert.Equal(4, claimed.Count);
         Assert.All(claimed, lease =>
         {
             Assert.Equal("scheduled", lease.Job.Queue);

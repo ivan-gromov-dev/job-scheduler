@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 
 namespace JobScheduler.Worker;
 
-internal sealed class ScheduleMaterializer(IScheduleStore schedules, TimeProvider timeProvider, IOptions<ScheduleMaterializerOptions> options, JobWorkerState state) : BackgroundService
+internal sealed class ScheduleMaterializer(IScheduleStore schedules, TimeProvider timeProvider, IOptions<ScheduleMaterializerOptions> options, JobWorkerState state, ScheduleMaterializerState materializerState) : BackgroundService
 {
     public override Task StopAsync(CancellationToken cancellationToken)
     {
@@ -13,15 +13,23 @@ internal sealed class ScheduleMaterializer(IScheduleStore schedules, TimeProvide
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var settings = options.Value;
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(settings.PollInterval, TimeSpan.Zero);
-        ArgumentOutOfRangeException.ThrowIfLessThan(settings.CatchUpLimit, 1);
-        using var timer = new PeriodicTimer(settings.PollInterval, timeProvider);
-        do
+        materializerState.Start();
+        try
         {
-            if (state.IsDraining) return;
-            await schedules.MaterializeDueAsync(timeProvider.GetUtcNow(), settings.CatchUpLimit, stoppingToken);
+            var settings = options.Value;
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(settings.PollInterval, TimeSpan.Zero);
+            ArgumentOutOfRangeException.ThrowIfLessThan(settings.CatchUpLimit, 1);
+            using var timer = new PeriodicTimer(settings.PollInterval, timeProvider);
+            do
+            {
+                if (state.IsDraining) return;
+                await schedules.MaterializeDueAsync(timeProvider.GetUtcNow(), settings.CatchUpLimit, stoppingToken);
+                materializerState.Succeeded(timeProvider.GetUtcNow());
+            }
+            while (await timer.WaitForNextTickAsync(stoppingToken));
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (Exception exception) { materializerState.Fail(exception); throw; }
+        finally { materializerState.Stop(); }
     }
 }

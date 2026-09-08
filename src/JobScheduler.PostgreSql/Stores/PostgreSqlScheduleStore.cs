@@ -78,7 +78,9 @@ public sealed class PostgreSqlScheduleStore(NpgsqlDataSource dataSource, Postgre
             var occurrences = Due(schedule, through, catchUpLimit);
             foreach (var occurrence in occurrences)
             {
-                context.Jobs.Add(JobEntity.FromJob(Job.Create(schedule.JobType, schedule.Payload, timeProvider.GetUtcNow(), occurrence, schedule.DeduplicationKey ?? $"schedule:{schedule.Id:N}:{occurrence.UtcTicks}", schedule.Queue, schedule.Priority, schedule.CorrelationId, schedule.PayloadVersion)));
+                var job = Job.Create(schedule.JobType, schedule.Payload, timeProvider.GetUtcNow(), occurrence, schedule.DeduplicationKey ?? $"schedule:{schedule.Id:N}:{occurrence.UtcTicks}", schedule.Queue, schedule.Priority, schedule.CorrelationId, schedule.PayloadVersion);
+                context.Jobs.Add(JobEntity.FromJob(job));
+                schedule.Record(new ScheduleMaterialization(occurrence, job.Id, timeProvider.GetUtcNow()));
                 count++;
             }
             schedule.NextOccurrence = schedule.CronExpression is null ? DateTimeOffset.MaxValue :
@@ -88,6 +90,45 @@ public sealed class PostgreSqlScheduleStore(NpgsqlDataSource dataSource, Postgre
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return count;
+    }
+
+    public async ValueTask<SchedulePage> ListAsync(ScheduleQuery query, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query); ArgumentOutOfRangeException.ThrowIfLessThan(query.Limit, 1);
+        await EnsureMigratedAsync(cancellationToken); await using var context = new JobSchedulerDbContext(dataSource);
+        var schedules = context.Schedules.AsNoTracking().AsQueryable();
+        if (query.JobType is not null) schedules = schedules.Where(x => x.JobType == query.JobType);
+        if (query.Queue is not null) schedules = schedules.Where(x => x.Queue == query.Queue);
+        if (query.CorrelationId is not null) schedules = schedules.Where(x => x.CorrelationId == query.CorrelationId);
+        if (query.IsPaused is not null) schedules = schedules.Where(x => x.IsPaused == query.IsPaused);
+        if (query.NextFrom is not null) schedules = schedules.Where(x => x.NextOccurrence >= query.NextFrom.Value.ToUniversalTime());
+        if (query.NextThrough is not null) schedules = schedules.Where(x => x.NextOccurrence <= query.NextThrough.Value.ToUniversalTime());
+        if (query.Cursor is not null)
+        {
+            var cursor = DecodeCursor(query.Cursor);
+            schedules = schedules.Where(x => x.NextOccurrence > cursor.Next || (x.NextOccurrence == cursor.Next && x.Id.CompareTo(cursor.Id) > 0));
+        }
+        var entities = await schedules.OrderBy(x => x.NextOccurrence).ThenBy(x => x.Id).Take(checked(query.Limit + 1)).ToArrayAsync(cancellationToken);
+        var items = entities.Take(query.Limit).Select(x => x.ToSchedule()).ToArray();
+        return new SchedulePage(items, entities.Length > query.Limit ? EncodeCursor(items[^1]) : null);
+    }
+
+    public async ValueTask<Job?> TriggerAsync(Guid scheduleId, CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken); await using var context = new JobSchedulerDbContext(dataSource);
+        var schedule = await context.Schedules.SingleOrDefaultAsync(x => x.Id == scheduleId, cancellationToken);
+        if (schedule is null) return null;
+        var now = timeProvider.GetUtcNow();
+        var job = Job.Create(schedule.JobType, schedule.Payload, now, now, null, schedule.Queue, schedule.Priority, schedule.CorrelationId, schedule.PayloadVersion);
+        context.Jobs.Add(JobEntity.FromJob(job)); schedule.Record(new ScheduleMaterialization(now, job.Id, now)); schedule.Version++;
+        await context.SaveChangesAsync(cancellationToken); return job;
+    }
+
+    private static string EncodeCursor(Schedule schedule) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{schedule.NextOccurrence.UtcTicks}:{schedule.Id:N}"));
+    private static (DateTimeOffset Next, Guid Id) DecodeCursor(string value)
+    {
+        try { var parts = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(value)).Split(':', 2); return (new DateTimeOffset(long.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture), TimeSpan.Zero), Guid.ParseExact(parts[1], "N")); }
+        catch (Exception exception) when (exception is FormatException or ArgumentException or OverflowException) { throw new ArgumentException("The cursor is invalid.", nameof(value), exception); }
     }
 
     private async ValueTask<bool> SetPausedAsync(Guid id, bool paused, CancellationToken cancellationToken)

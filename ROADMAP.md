@@ -98,15 +98,15 @@ application upgrades and worker instances.
 
 ## Milestone 8 — Operational control
 
-- [ ] Add cursor-based job and schedule listing with filters for time, type, status,
+- [x] Add cursor-based job and schedule listing with filters for time, type, status,
       queue, and correlation identifier.
-- [ ] Add bulk cancellation and replay plus manual triggering of schedules and
+- [x] Add bulk cancellation and replay plus manual triggering of schedules and
       inspection of their next occurrence and materialization history.
-- [ ] Add storage and schema readiness checks, schedule-materializer health, and
+- [x] Add storage and schema readiness checks, schedule-materializer health, and
       propagation of fatal background-service failures.
-- [ ] Support an explicit schema-validation mode that refuses to start against a
+- [x] Support an explicit schema-validation mode that refuses to start against a
       missing or incompatible database without applying migrations.
-- [ ] Expose administrative draining and report drain progress and active work.
+- [x] Expose administrative draining and report drain progress and active work.
 
 Exit criterion: operators can determine whether the complete scheduler is ready,
 inspect durable work, and control it without direct database access.

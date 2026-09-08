@@ -90,16 +90,25 @@ a UTC `DateTimeOffset` for delayed work. Pass `JobEnqueueOptions.DeduplicationKe
 coalesce active or already successful work for the same job type and application key.
 The same options select a queue and priority, carry a correlation identifier, and can
 set `MaxQueueDepth`; enqueue throws `QueueFullException` when that queue is full.
-Resolve `IJobAdministration` to inspect or filter jobs, cancel pending work, and replay
-dead letters. The `job_scheduler_worker` health check is tagged `ready`.
+Resolve `IJobAdministration` to inspect jobs with cursor pagination and time, type,
+status, queue, or correlation filters, and to cancel or replay jobs individually or in
+bulk. Resolve `IJobWorkerControl` to begin an administrative drain and inspect active
+work and completion progress. The `job_scheduler_worker` health check is tagged
+`ready`.
 
 Subscribe an OpenTelemetry SDK to the `JobScheduler` activity source and meter. It
 emits execution spans and instruments for claimed/completed throughput, retries, dead
 letters, handler duration, and scheduling lag. Execution logs use structured `JobId`,
 `Attempt`, `Queue`, and `CorrelationId` properties.
 Resolve `IScheduleClient` for one-off or recurring typed jobs, and `IScheduleStore` to
-inspect, pause, resume, update, or delete schedules. PostgreSQL materialization locks
+inspect, page/filter, manually trigger, pause, resume, update, or delete schedules;
+each schedule exposes its next occurrence and durable materialization history.
+PostgreSQL materialization locks
 due schedule rows and writes jobs plus the next occurrence in one transaction, so
 multiple materializers can safely share the database.
+`job_scheduler_materializer` and `job_scheduler_postgresql` readiness checks report
+background and storage/schema health. Set `AutoMigrate = false` and
+`ValidateSchemaOnStartup = true` to refuse startup when the database is missing or
+has pending migrations without changing its schema.
 Throw `JobExecutionException` with a permanent or cancellation classification when a
 failure must not be retried. The public API is not yet declared stable.

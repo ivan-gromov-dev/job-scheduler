@@ -60,19 +60,67 @@ public sealed class InMemoryScheduleStore(IJobStore jobs, TimeProvider timeProvi
             var count = 0;
             foreach (var schedule in schedules.Values.Where(x => !x.IsPaused && x.NextOccurrence <= through).ToArray())
             {
+                var updatedSchedule = schedule;
                 var occurrences = GetDueOccurrences(schedule, through, catchUpLimit);
                 foreach (var occurrence in occurrences)
                 {
-                    await jobs.EnqueueAsync(schedule.JobType, schedule.Payload, new JobEnqueueOptions { ScheduledAt = occurrence, DeduplicationKey = schedule.DeduplicationKey ?? $"schedule:{schedule.Id:N}:{occurrence.UtcTicks}", Queue = schedule.Queue, Priority = schedule.Priority, CorrelationId = schedule.CorrelationId, PayloadVersion = schedule.PayloadVersion }, cancellationToken);
+                    var job = await jobs.EnqueueAsync(schedule.JobType, schedule.Payload, new JobEnqueueOptions { ScheduledAt = occurrence, DeduplicationKey = schedule.DeduplicationKey ?? $"schedule:{schedule.Id:N}:{occurrence.UtcTicks}", Queue = schedule.Queue, Priority = schedule.Priority, CorrelationId = schedule.CorrelationId, PayloadVersion = schedule.PayloadVersion }, cancellationToken);
+                    updatedSchedule = updatedSchedule with { MaterializationHistory = [.. updatedSchedule.MaterializationHistory, new ScheduleMaterialization(occurrence, job.Id, timeProvider.GetUtcNow())] };
                     count++;
                 }
                 var next = schedule.CronExpression is null ? DateTimeOffset.MaxValue :
                     schedule.MisfirePolicy == MisfirePolicy.CatchUp && occurrences.Count == catchUpLimit ? Next(schedule, occurrences[^1]) : Next(schedule, through);
-                schedules[schedule.Id] = schedule with { NextOccurrence = next, Version = schedule.Version + 1 };
+                schedules[schedule.Id] = updatedSchedule with { NextOccurrence = next, Version = schedule.Version + 1 };
             }
             return count;
         }
         finally { sync.Release(); }
+    }
+
+    public async ValueTask<SchedulePage> ListAsync(ScheduleQuery query, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentOutOfRangeException.ThrowIfLessThan(query.Limit, 1);
+        await sync.WaitAsync(cancellationToken);
+        try
+        {
+            (DateTimeOffset Next, Guid Id)? cursor = query.Cursor is null ? null : DecodeCursor(query.Cursor);
+            var items = schedules.Values
+                .Where(x => query.JobType is null || x.JobType == query.JobType)
+                .Where(x => query.Queue is null || x.Queue == query.Queue)
+                .Where(x => query.CorrelationId is null || x.CorrelationId == query.CorrelationId)
+                .Where(x => query.IsPaused is null || x.IsPaused == query.IsPaused)
+                .Where(x => query.NextFrom is null || x.NextOccurrence >= query.NextFrom.Value.ToUniversalTime())
+                .Where(x => query.NextThrough is null || x.NextOccurrence <= query.NextThrough.Value.ToUniversalTime())
+                .OrderBy(x => x.NextOccurrence).ThenBy(x => x.Id)
+                .Where(x => cursor is null || x.NextOccurrence > cursor.Value.Next || (x.NextOccurrence == cursor.Value.Next && x.Id.CompareTo(cursor.Value.Id) > 0))
+                .Take(checked(query.Limit + 1)).ToArray();
+            var page = items.Take(query.Limit).ToArray();
+            var next = items.Length > query.Limit ? EncodeCursor(page[^1]) : null;
+            return new SchedulePage(page, next);
+        }
+        finally { sync.Release(); }
+    }
+
+    public async ValueTask<Job?> TriggerAsync(Guid scheduleId, CancellationToken cancellationToken = default)
+    {
+        await sync.WaitAsync(cancellationToken);
+        try
+        {
+            if (!schedules.TryGetValue(scheduleId, out var schedule)) return null;
+            var now = timeProvider.GetUtcNow();
+            var job = await jobs.EnqueueAsync(schedule.JobType, schedule.Payload, new JobEnqueueOptions { ScheduledAt = now, Queue = schedule.Queue, Priority = schedule.Priority, CorrelationId = schedule.CorrelationId, PayloadVersion = schedule.PayloadVersion }, cancellationToken);
+            schedules[scheduleId] = schedule with { MaterializationHistory = [.. schedule.MaterializationHistory, new ScheduleMaterialization(now, job.Id, now)], Version = schedule.Version + 1 };
+            return job;
+        }
+        finally { sync.Release(); }
+    }
+
+    private static string EncodeCursor(Schedule schedule) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{schedule.NextOccurrence.UtcTicks}:{schedule.Id:N}"));
+    private static (DateTimeOffset Next, Guid Id) DecodeCursor(string value)
+    {
+        try { var parts = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(value)).Split(':', 2); return (new DateTimeOffset(long.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture), TimeSpan.Zero), Guid.ParseExact(parts[1], "N")); }
+        catch (Exception exception) when (exception is FormatException or ArgumentException or OverflowException) { throw new ArgumentException("The cursor is invalid.", nameof(value), exception); }
     }
 
     private async ValueTask<bool> SetPausedAsync(Guid id, bool paused, CancellationToken cancellationToken)

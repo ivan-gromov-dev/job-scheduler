@@ -9,4 +9,6 @@ public interface IScheduleStore
     ValueTask<bool> ResumeAsync(Guid scheduleId, CancellationToken cancellationToken = default);
     ValueTask<bool> DeleteAsync(Guid scheduleId, CancellationToken cancellationToken = default);
     ValueTask<int> MaterializeDueAsync(DateTimeOffset through, int catchUpLimit = 100, CancellationToken cancellationToken = default);
+    ValueTask<SchedulePage> ListAsync(ScheduleQuery query, CancellationToken cancellationToken = default);
+    ValueTask<JobScheduler.Core.Jobs.Job?> TriggerAsync(Guid scheduleId, CancellationToken cancellationToken = default);
 }
