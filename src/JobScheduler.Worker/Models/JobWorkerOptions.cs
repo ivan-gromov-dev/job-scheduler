@@ -2,6 +2,8 @@ namespace JobScheduler.Worker;
 
 public sealed class JobWorkerOptions
 {
+    public string WorkerId { get; set; } = $"{Environment.MachineName}:{Environment.ProcessId}";
+
     public int MaxConcurrency { get; set; } = Environment.ProcessorCount;
 
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromMilliseconds(100);

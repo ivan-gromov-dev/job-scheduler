@@ -1,9 +1,9 @@
-using System.Text.Json;
 using JobScheduler.Core.Handlers;
+using JobScheduler.Core.Serialization;
 
 namespace JobScheduler.Core.Jobs;
 
-internal sealed class JobClient(IJobStore store) : IJobClient
+internal sealed class JobClient(IJobStore store, JobHandlerRegistry registry, IJobPayloadSerializer serializer) : IJobClient
 {
     public ValueTask<Job> EnqueueAsync<TJob>(
         TJob job,
@@ -11,11 +11,8 @@ internal sealed class JobClient(IJobStore store) : IJobClient
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(job);
-        return store.EnqueueAsync(
-            JobTypeName.For<TJob>(),
-            JsonSerializer.Serialize(job),
-            scheduledAt,
-            cancellationToken);
+        var type = registry.Get<TJob>();
+        return store.EnqueueAsync(type.Name, serializer.Serialize(job), new JobEnqueueOptions { ScheduledAt = scheduledAt, PayloadVersion = type.Version }, cancellationToken);
     }
 
     public ValueTask<Job> EnqueueAsync<TJob>(
@@ -25,7 +22,8 @@ internal sealed class JobClient(IJobStore store) : IJobClient
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(options);
-        return store.EnqueueAsync(JobTypeName.For<TJob>(), JsonSerializer.Serialize(job), options, cancellationToken);
+        var type = registry.Get<TJob>();
+        return store.EnqueueAsync(type.Name, serializer.Serialize(job), options with { PayloadVersion = type.Version }, cancellationToken);
     }
 
     public ValueTask<Job> ScheduleAsync<TJob>(

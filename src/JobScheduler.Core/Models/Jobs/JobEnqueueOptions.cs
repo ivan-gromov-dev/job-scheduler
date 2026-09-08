@@ -13,4 +13,6 @@ public sealed record JobEnqueueOptions
     public string? CorrelationId { get; init; }
 
     public int? MaxQueueDepth { get; init; }
+
+    public int PayloadVersion { get; init; } = 1;
 }

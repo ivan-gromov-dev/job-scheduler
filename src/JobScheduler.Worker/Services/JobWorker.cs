@@ -77,8 +77,8 @@ public sealed class JobWorker(
             while (!stoppingToken.IsCancellationRequested)
             {
                 var lease = queue is null
-                    ? await store.ClaimAsync(settings.LeaseDuration, stoppingToken)
-                    : await store.ClaimAsync(settings.LeaseDuration, [queue], stoppingToken);
+                    ? await store.ClaimAsync(settings.LeaseDuration, [], settings.WorkerId, stoppingToken)
+                    : await store.ClaimAsync(settings.LeaseDuration, [queue], settings.WorkerId, stoppingToken);
                 if (lease is null)
                 {
                     await Task.Delay(settings.PollInterval, timeProvider, stoppingToken);
@@ -225,6 +225,7 @@ public sealed class JobWorker(
 
     private static JobWorkerOptions Validate(JobWorkerOptions value)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value.WorkerId);
         ArgumentOutOfRangeException.ThrowIfLessThan(value.MaxConcurrency, 1);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value.PollInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value.LeaseDuration, TimeSpan.Zero);

@@ -11,7 +11,7 @@ public sealed class InMemoryScheduleStore(IJobStore jobs, TimeProvider timeProvi
     {
         Validate(jobType, payload, options);
         var next = GetFirstOccurrence(options, timeProvider.GetUtcNow());
-        var schedule = new Schedule { Id = Guid.NewGuid(), JobType = jobType, Payload = payload, CronExpression = options.CronExpression, TimeZoneId = options.TimeZoneId, MisfirePolicy = options.MisfirePolicy, NextOccurrence = next };
+        var schedule = new Schedule { Id = Guid.NewGuid(), JobType = jobType, Payload = payload, PayloadVersion = options.PayloadVersion, CronExpression = options.CronExpression, TimeZoneId = options.TimeZoneId, MisfirePolicy = options.MisfirePolicy, NextOccurrence = next, Queue = options.Queue, Priority = options.Priority, DeduplicationKey = options.DeduplicationKey, CorrelationId = options.CorrelationId };
         await sync.WaitAsync(cancellationToken);
         try { schedules.Add(schedule.Id, schedule); }
         finally { sync.Release(); }
@@ -33,7 +33,7 @@ public sealed class InMemoryScheduleStore(IJobStore jobs, TimeProvider timeProvi
         {
             if (!schedules.TryGetValue(scheduleId, out var current)) return null;
             Validate(current.JobType, current.Payload, options);
-            var updated = current with { CronExpression = options.CronExpression, TimeZoneId = options.TimeZoneId, MisfirePolicy = options.MisfirePolicy, NextOccurrence = GetFirstOccurrence(options, timeProvider.GetUtcNow()), Version = current.Version + 1 };
+            var updated = current with { CronExpression = options.CronExpression, TimeZoneId = options.TimeZoneId, MisfirePolicy = options.MisfirePolicy, NextOccurrence = GetFirstOccurrence(options, timeProvider.GetUtcNow()), Queue = options.Queue, Priority = options.Priority, DeduplicationKey = options.DeduplicationKey, CorrelationId = options.CorrelationId, Version = current.Version + 1 };
             schedules[scheduleId] = updated;
             return updated;
         }
@@ -63,7 +63,7 @@ public sealed class InMemoryScheduleStore(IJobStore jobs, TimeProvider timeProvi
                 var occurrences = GetDueOccurrences(schedule, through, catchUpLimit);
                 foreach (var occurrence in occurrences)
                 {
-                    await jobs.EnqueueAsync(schedule.JobType, schedule.Payload, new JobEnqueueOptions { ScheduledAt = occurrence, DeduplicationKey = $"schedule:{schedule.Id:N}:{occurrence.UtcTicks}" }, cancellationToken);
+                    await jobs.EnqueueAsync(schedule.JobType, schedule.Payload, new JobEnqueueOptions { ScheduledAt = occurrence, DeduplicationKey = schedule.DeduplicationKey ?? $"schedule:{schedule.Id:N}:{occurrence.UtcTicks}", Queue = schedule.Queue, Priority = schedule.Priority, CorrelationId = schedule.CorrelationId, PayloadVersion = schedule.PayloadVersion }, cancellationToken);
                     count++;
                 }
                 var next = schedule.CronExpression is null ? DateTimeOffset.MaxValue :
@@ -103,6 +103,8 @@ public sealed class InMemoryScheduleStore(IJobStore jobs, TimeProvider timeProvi
     private static void Validate(string jobType, string payload, ScheduleOptions options)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobType); ArgumentNullException.ThrowIfNull(payload); ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.Queue);
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.PayloadVersion, 1);
         if ((options.RunAt is null) == (options.CronExpression is null)) throw new ArgumentException("Specify exactly one of RunAt or CronExpression.", nameof(options));
         _ = TimeZoneInfo.FindSystemTimeZoneById(options.TimeZoneId);
         if (options.CronExpression is not null) _ = CronSchedule.Parse(options.CronExpression);

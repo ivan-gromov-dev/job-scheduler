@@ -25,12 +25,17 @@ public sealed class PostgreSqlJobStoreIntegrationTests
 
         Assert.Null(await first.GetAsync(Guid.NewGuid()));
         var low = await first.EnqueueAsync("priority", "low", new JobEnqueueOptions { Queue = "operations", Priority = 1, MaxQueueDepth = 2 });
-        var high = await first.EnqueueAsync("priority", "high", new JobEnqueueOptions { Queue = "operations", Priority = 9, CorrelationId = "trace-1", MaxQueueDepth = 2 });
+        var high = await first.EnqueueAsync("priority", "high", new JobEnqueueOptions { Queue = "operations", Priority = 9, CorrelationId = "trace-1", PayloadVersion = 3, MaxQueueDepth = 2 });
         await Assert.ThrowsAsync<QueueFullException>(() => first.EnqueueAsync("priority", "full", new JobEnqueueOptions { Queue = "operations", MaxQueueDepth = 2 }).AsTask());
-        var highLease = await first.ClaimAsync(TimeSpan.FromMinutes(1), ["operations"]);
+        var highLease = await first.ClaimAsync(TimeSpan.FromMinutes(1), ["operations"], "worker-db-1");
         Assert.Equal(high.Id, highLease!.Job.Id);
         Assert.Equal("trace-1", highLease.Job.CorrelationId);
+        Assert.Equal(3, highLease.Job.PayloadVersion);
         Assert.True(await first.CompleteAsync(highLease));
+        var completedAttempt = Assert.Single((await first.GetAsync(high.Id))!.AttemptHistory);
+        Assert.Equal("worker-db-1", completedAttempt.WorkerId);
+        Assert.Equal(JobStatus.Succeeded, completedAttempt.Outcome);
+        Assert.NotNull(completedAttempt.FinishedAt);
         var listed = await first.ListAsync(new JobQuery { Queue = "operations", Status = JobStatus.Pending });
         Assert.Equal(low.Id, Assert.Single(listed).Id);
         var lowLease = await first.ClaimAsync(TimeSpan.FromMinutes(1), ["operations"]);
@@ -107,7 +112,7 @@ public sealed class PostgreSqlJobStoreIntegrationTests
         var first = new PostgreSqlScheduleStore(dataSource, options, migrator, clock);
         var second = new PostgreSqlScheduleStore(dataSource, options, migrator, clock);
         using var jobs = new PostgreSqlJobStore(dataSource, options, migrator, clock);
-        var schedule = await first.CreateAsync("hourly", "{}", new ScheduleOptions { CronExpression = "1 * * * *", MisfirePolicy = MisfirePolicy.CatchUp });
+        var schedule = await first.CreateAsync("hourly", "{}", new ScheduleOptions { CronExpression = "1 * * * *", MisfirePolicy = MisfirePolicy.CatchUp, Queue = "scheduled", Priority = 7, CorrelationId = "schedule-trace", PayloadVersion = 2 });
 
         var counts = await Task.WhenAll(first.MaterializeDueAsync(clock.GetUtcNow().AddHours(2).AddMinutes(1)).AsTask(), second.MaterializeDueAsync(clock.GetUtcNow().AddHours(2).AddMinutes(1)).AsTask());
         Assert.Equal(3, counts.Sum());
@@ -121,6 +126,13 @@ public sealed class PostgreSqlJobStoreIntegrationTests
         var claimed = new List<JobLease>();
         while (await jobs.ClaimAsync(TimeSpan.FromMinutes(1)) is { } lease) { claimed.Add(lease); await jobs.CompleteAsync(lease); }
         Assert.Equal(3, claimed.Count);
+        Assert.All(claimed, lease =>
+        {
+            Assert.Equal("scheduled", lease.Job.Queue);
+            Assert.Equal(7, lease.Job.Priority);
+            Assert.Equal("schedule-trace", lease.Job.CorrelationId);
+            Assert.Equal(2, lease.Job.PayloadVersion);
+        });
     }
 
     private static async Task ResetAsync(NpgsqlDataSource dataSource)

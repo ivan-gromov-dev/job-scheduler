@@ -82,15 +82,15 @@ timeouts, maintenance, and shutdown cannot silently create conflicting execution
 
 ## Milestone 7 — Durable job and schedule contracts
 
-- [ ] Add stable explicit job type names independent of CLR namespaces and type
+- [x] Add stable explicit job type names independent of CLR namespaces and type
       renames.
-- [ ] Version serialized payloads and support aliases or upcasters for jobs persisted
+- [x] Version serialized payloads and support aliases or upcasters for jobs persisted
       by older application versions.
-- [ ] Make serializer behavior configurable without coupling core contracts to a
+- [x] Make serializer behavior configurable without coupling core contracts to a
       storage provider.
-- [ ] Carry queue, priority, deduplication, and correlation options through one-off and
+- [x] Carry queue, priority, deduplication, and correlation options through one-off and
       recurring schedules.
-- [ ] Record worker identity and durable attempt history, including claim, renewal,
+- [x] Record worker identity and durable attempt history, including claim, renewal,
       duration, outcome, failure, and retry timing.
 
 Exit criterion: persisted jobs and schedules remain executable and diagnosable across

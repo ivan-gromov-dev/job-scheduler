@@ -8,6 +8,8 @@ public sealed record Job
 
     public required string Payload { get; init; }
 
+    public int PayloadVersion { get; init; } = 1;
+
     public DateTimeOffset EnqueuedAt { get; init; }
 
     public DateTimeOffset ScheduledAt { get; init; }
@@ -30,6 +32,8 @@ public sealed record Job
 
     public DateTimeOffset? CompletedAt { get; init; }
 
+    public IReadOnlyList<JobAttempt> AttemptHistory { get; init; } = [];
+
     public static Job Create(
         string type,
         string payload,
@@ -38,11 +42,13 @@ public sealed record Job
         string? deduplicationKey = null,
         string queue = "default",
         int priority = 0,
-        string? correlationId = null)
+        string? correlationId = null,
+        int payloadVersion = 1)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(type);
         ArgumentNullException.ThrowIfNull(payload);
         ArgumentException.ThrowIfNullOrWhiteSpace(queue);
+        ArgumentOutOfRangeException.ThrowIfLessThan(payloadVersion, 1);
 
         return new Job
         {
@@ -55,6 +61,7 @@ public sealed record Job
             Queue = queue,
             Priority = priority,
             CorrelationId = correlationId,
+            PayloadVersion = payloadVersion,
         };
     }
 }
