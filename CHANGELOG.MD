@@ -7,6 +7,13 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ### Added
 
+- Durable PostgreSQL storage with serialized versioned migrations, indexed polling,
+  atomic multi-worker claims, lease recovery, and guarded lifecycle updates.
+- PostgreSQL integration coverage for migration and claim contention, crash recovery,
+  stale lease rejection, restart, retry, dead-letter, and replay behavior.
+- Hybrid PostgreSQL persistence: EF Core owns the model, migrations, and ordinary
+  lifecycle CRUD while focused Npgsql commands retain atomic claim and lease paths.
+
 - In-memory Milestone 1 API for enqueueing, scheduling, leasing, completing, failing,
   and canceling jobs with concurrency-safe lifecycle transitions.
 - Typed JSON job handlers, dependency-injection registration, and an in-process worker
