@@ -21,7 +21,7 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
         ArgumentException.ThrowIfNullOrWhiteSpace(scheduledAt.Queue);
         var configuredCapacity = scheduledAt.MaxQueueDepth ?? queueOptions.GetCapacity(scheduledAt.Queue);
         if (configuredCapacity is <= 0) throw new ArgumentOutOfRangeException(nameof(scheduledAt), "Queue capacity must be positive.");
-        var job = Job.Create(type, payload, timeProvider.GetUtcNow(), scheduledAt.ScheduledAt, string.IsNullOrWhiteSpace(scheduledAt.DeduplicationKey) ? null : scheduledAt.DeduplicationKey, scheduledAt.Queue, scheduledAt.Priority, scheduledAt.CorrelationId);
+        var job = Job.Create(type, payload, timeProvider.GetUtcNow(), scheduledAt.ScheduledAt, string.IsNullOrWhiteSpace(scheduledAt.DeduplicationKey) ? null : scheduledAt.DeduplicationKey, scheduledAt.Queue, scheduledAt.Priority, scheduledAt.CorrelationId, scheduledAt.PayloadVersion);
         await using var context = new JobSchedulerDbContext(dataSource);
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         await context.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({job.Queue}, 0))", cancellationToken);
@@ -50,8 +50,11 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
         => await ClaimAsync(leaseDuration, Array.Empty<string>(), cancellationToken);
 
     public async ValueTask<JobLease?> ClaimAsync(TimeSpan leaseDuration, IReadOnlyCollection<string> queues, CancellationToken cancellationToken = default)
+        => await ClaimAsync(leaseDuration, queues, "unknown", cancellationToken);
+
+    public async ValueTask<JobLease?> ClaimAsync(TimeSpan leaseDuration, IReadOnlyCollection<string> queues, string workerId, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(queues); ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(leaseDuration, TimeSpan.Zero); await EnsureMigratedAsync(cancellationToken);
+        ArgumentNullException.ThrowIfNull(queues); ArgumentException.ThrowIfNullOrWhiteSpace(workerId); ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(leaseDuration, TimeSpan.Zero); await EnsureMigratedAsync(cancellationToken);
         var now = timeProvider.GetUtcNow(); var token = Guid.NewGuid(); var expiresAt = now.Add(leaseDuration);
         const string sql = """
             WITH candidate AS (SELECT id FROM job_scheduler_jobs
@@ -60,13 +63,15 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
               ORDER BY priority DESC, CASE WHEN status=0 THEN scheduled_at ELSE lease_expires_at END, enqueued_at, id
               FOR UPDATE SKIP LOCKED LIMIT 1)
             UPDATE job_scheduler_jobs j SET status=1,attempt=attempt+1,failure=NULL,failure_kind=NULL,
-              completed_at=NULL,lease_token=$2,lease_expires_at=$3,row_version=row_version+1
+              completed_at=NULL,lease_token=$2,lease_expires_at=$3,row_version=row_version+1,
+              attempt_history=attempt_history || jsonb_build_array(jsonb_build_object(
+                'Number',attempt+1,'WorkerId',$5,'ClaimedAt',$1,'LeaseExpiresAt',$3))
             FROM candidate WHERE j.id=candidate.id
-            RETURNING j.id,j.type,j.payload,j.enqueued_at,j.scheduled_at,j.status,j.attempt,j.failure,j.failure_kind,j.deduplication_key,j.completed_at,j.queue,j.priority,j.correlation_id
+            RETURNING j.id,j.type,j.payload,j.payload_version,j.enqueued_at,j.scheduled_at,j.status,j.attempt,j.failure,j.failure_kind,j.deduplication_key,j.completed_at,j.queue,j.priority,j.correlation_id,j.attempt_history::text
             """;
-        await using var command = dataSource.CreateCommand(sql); command.Parameters.AddWithValue(now); command.Parameters.AddWithValue(token); command.Parameters.AddWithValue(expiresAt); command.Parameters.AddWithValue(queues.ToArray());
+        await using var command = dataSource.CreateCommand(sql); command.Parameters.AddWithValue(now); command.Parameters.AddWithValue(token); command.Parameters.AddWithValue(expiresAt); command.Parameters.AddWithValue(queues.ToArray()); command.Parameters.AddWithValue(workerId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? new JobLease(ReadJob(reader), token, expiresAt) : null;
+        return await reader.ReadAsync(cancellationToken) ? new JobLease(ReadJob(reader), token, expiresAt, workerId) : null;
     }
 
     public ValueTask<bool> CompleteAsync(JobLease lease, CancellationToken cancellationToken = default) => FinishAsync(lease, JobStatus.Succeeded, null, null, cancellationToken);
@@ -78,9 +83,9 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
     {
         ArgumentNullException.ThrowIfNull(lease); ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(leaseDuration, TimeSpan.Zero); await EnsureMigratedAsync(cancellationToken);
         var now = timeProvider.GetUtcNow(); var expiresAt = now.Add(leaseDuration);
-        const string sql = "UPDATE job_scheduler_jobs SET lease_expires_at=$1,row_version=row_version+1 WHERE id=$2 AND status=1 AND lease_token=$3 AND lease_expires_at>$4";
+        const string sql = "UPDATE job_scheduler_jobs SET lease_expires_at=$1,row_version=row_version+1,attempt_history=jsonb_set(jsonb_set(attempt_history, ARRAY[(jsonb_array_length(attempt_history)-1)::text,'LastRenewedAt'],to_jsonb($4::timestamptz),true),ARRAY[(jsonb_array_length(attempt_history)-1)::text,'LeaseExpiresAt'],to_jsonb($1::timestamptz),true) WHERE id=$2 AND status=1 AND lease_token=$3 AND lease_expires_at>$4";
         await using var command = dataSource.CreateCommand(sql); command.Parameters.AddWithValue(expiresAt); command.Parameters.AddWithValue(lease.Job.Id); command.Parameters.AddWithValue(lease.Token); command.Parameters.AddWithValue(now);
-        return await command.ExecuteNonQueryAsync(cancellationToken) == 1 ? new JobLease(lease.Job, lease.Token, expiresAt) : null;
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1 ? new JobLease(lease.Job, lease.Token, expiresAt, lease.WorkerId) : null;
     }
 
     public async ValueTask<IReadOnlyList<Job>> GetDeadLettersAsync(CancellationToken cancellationToken = default)
@@ -149,8 +154,8 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
     {
         ArgumentNullException.ThrowIfNull(lease); if (failure is null && status is JobStatus.Pending or JobStatus.DeadLettered) throw new ArgumentNullException(nameof(failure));
         await EnsureMigratedAsync(cancellationToken); DateTimeOffset? completedAt = status == JobStatus.Pending ? null : timeProvider.GetUtcNow();
-        const string sql = "UPDATE job_scheduler_jobs SET status=$1,failure=$2,failure_kind=$3,scheduled_at=COALESCE($4,scheduled_at),completed_at=$5,lease_token=NULL,lease_expires_at=NULL,row_version=row_version+1 WHERE id=$6 AND status=1 AND lease_token=$7 AND lease_expires_at>$8";
-        await using var command = dataSource.CreateCommand(sql); command.Parameters.AddWithValue((short)status); command.Parameters.AddWithValue((object?)failure?.Message ?? DBNull.Value); command.Parameters.AddWithValue(failure is null ? DBNull.Value : (short)failure.Kind); command.Parameters.AddWithValue((object?)scheduledAt ?? DBNull.Value); command.Parameters.AddWithValue((object?)completedAt ?? DBNull.Value); command.Parameters.AddWithValue(lease.Job.Id); command.Parameters.AddWithValue(lease.Token); command.Parameters.AddWithValue(timeProvider.GetUtcNow());
+        const string sql = "UPDATE job_scheduler_jobs SET status=$1,failure=$2,failure_kind=$3,scheduled_at=COALESCE($4,scheduled_at),completed_at=$5,lease_token=NULL,lease_expires_at=NULL,row_version=row_version+1,attempt_history=jsonb_set(attempt_history,ARRAY[(jsonb_array_length(attempt_history)-1)::text],(attempt_history->(jsonb_array_length(attempt_history)-1)) || jsonb_strip_nulls(jsonb_build_object('FinishedAt',$9::timestamptz,'Outcome',$1::smallint,'Failure',$2::text,'FailureKind',$3::smallint,'RetryAt',$4::timestamptz)),false) WHERE id=$6 AND status=1 AND lease_token=$7 AND lease_expires_at>$8";
+        await using var command = dataSource.CreateCommand(sql); command.Parameters.AddWithValue((short)status); command.Parameters.AddWithValue((object?)failure?.Message ?? DBNull.Value); command.Parameters.AddWithValue(failure is null ? DBNull.Value : (short)failure.Kind); command.Parameters.AddWithValue((object?)scheduledAt ?? DBNull.Value); command.Parameters.AddWithValue((object?)completedAt ?? DBNull.Value); command.Parameters.AddWithValue(lease.Job.Id); command.Parameters.AddWithValue(lease.Token); command.Parameters.AddWithValue(timeProvider.GetUtcNow()); command.Parameters.AddWithValue(timeProvider.GetUtcNow());
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
@@ -162,7 +167,7 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
 
     private static Task<JobEntity?> FindDeduplicatedAsync(JobSchedulerDbContext context, string type, string key, CancellationToken cancellationToken) => context.Jobs.AsNoTracking().SingleOrDefaultAsync(x => x.Type == type && x.DeduplicationKey == key && (x.Status == JobStatus.Pending || x.Status == JobStatus.Processing || x.Status == JobStatus.Succeeded), cancellationToken);
 
-    private static Job ReadJob(NpgsqlDataReader reader) => new() { Id = reader.GetGuid(0), Type = reader.GetString(1), Payload = reader.GetString(2), EnqueuedAt = reader.GetFieldValue<DateTimeOffset>(3), ScheduledAt = reader.GetFieldValue<DateTimeOffset>(4), Status = (JobStatus)reader.GetInt16(5), Attempt = reader.GetInt32(6), Failure = reader.IsDBNull(7) ? null : reader.GetString(7), FailureKind = reader.IsDBNull(8) ? null : (JobFailureKind)reader.GetInt16(8), DeduplicationKey = reader.IsDBNull(9) ? null : reader.GetString(9), CompletedAt = reader.IsDBNull(10) ? null : reader.GetFieldValue<DateTimeOffset>(10), Queue = reader.GetString(11), Priority = reader.GetInt32(12), CorrelationId = reader.IsDBNull(13) ? null : reader.GetString(13) };
+    private static Job ReadJob(NpgsqlDataReader reader) => new() { Id = reader.GetGuid(0), Type = reader.GetString(1), Payload = reader.GetString(2), PayloadVersion = reader.GetInt32(3), EnqueuedAt = reader.GetFieldValue<DateTimeOffset>(4), ScheduledAt = reader.GetFieldValue<DateTimeOffset>(5), Status = (JobStatus)reader.GetInt16(6), Attempt = reader.GetInt32(7), Failure = reader.IsDBNull(8) ? null : reader.GetString(8), FailureKind = reader.IsDBNull(9) ? null : (JobFailureKind)reader.GetInt16(9), DeduplicationKey = reader.IsDBNull(10) ? null : reader.GetString(10), CompletedAt = reader.IsDBNull(11) ? null : reader.GetFieldValue<DateTimeOffset>(11), Queue = reader.GetString(12), Priority = reader.GetInt32(13), CorrelationId = reader.IsDBNull(14) ? null : reader.GetString(14), AttemptHistory = System.Text.Json.JsonSerializer.Deserialize<JobAttempt[]>(reader.GetString(15)) ?? [] };
 
     public void Dispose() => migrationLock.Dispose();
 }

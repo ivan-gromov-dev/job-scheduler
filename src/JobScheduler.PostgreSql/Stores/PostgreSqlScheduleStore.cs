@@ -16,10 +16,15 @@ public sealed class PostgreSqlScheduleStore(NpgsqlDataSource dataSource, Postgre
             Id = Guid.NewGuid(),
             JobType = jobType,
             Payload = payload,
+            PayloadVersion = options.PayloadVersion,
             CronExpression = options.CronExpression,
             TimeZoneId = options.TimeZoneId,
             MisfirePolicy = options.MisfirePolicy,
             NextOccurrence = First(options, timeProvider.GetUtcNow()),
+            Queue = options.Queue,
+            Priority = options.Priority,
+            DeduplicationKey = options.DeduplicationKey,
+            CorrelationId = options.CorrelationId,
         };
         await using var context = new JobSchedulerDbContext(dataSource);
         context.Schedules.Add(entity);
@@ -44,6 +49,7 @@ public sealed class PostgreSqlScheduleStore(NpgsqlDataSource dataSource, Postgre
         Validate(entity.JobType, entity.Payload, options);
         entity.CronExpression = options.CronExpression; entity.TimeZoneId = options.TimeZoneId;
         entity.MisfirePolicy = options.MisfirePolicy; entity.NextOccurrence = First(options, timeProvider.GetUtcNow()); entity.Version++;
+        entity.Queue = options.Queue; entity.Priority = options.Priority; entity.DeduplicationKey = options.DeduplicationKey; entity.CorrelationId = options.CorrelationId;
         await context.SaveChangesAsync(cancellationToken);
         return entity.ToSchedule();
     }
@@ -72,7 +78,7 @@ public sealed class PostgreSqlScheduleStore(NpgsqlDataSource dataSource, Postgre
             var occurrences = Due(schedule, through, catchUpLimit);
             foreach (var occurrence in occurrences)
             {
-                context.Jobs.Add(JobEntity.FromJob(Job.Create(schedule.JobType, schedule.Payload, timeProvider.GetUtcNow(), occurrence, $"schedule:{schedule.Id:N}:{occurrence.UtcTicks}")));
+                context.Jobs.Add(JobEntity.FromJob(Job.Create(schedule.JobType, schedule.Payload, timeProvider.GetUtcNow(), occurrence, schedule.DeduplicationKey ?? $"schedule:{schedule.Id:N}:{occurrence.UtcTicks}", schedule.Queue, schedule.Priority, schedule.CorrelationId, schedule.PayloadVersion)));
                 count++;
             }
             schedule.NextOccurrence = schedule.CronExpression is null ? DateTimeOffset.MaxValue :
@@ -113,6 +119,8 @@ public sealed class PostgreSqlScheduleStore(NpgsqlDataSource dataSource, Postgre
     private static void Validate(string jobType, string payload, ScheduleOptions schedule)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobType); ArgumentNullException.ThrowIfNull(payload); ArgumentNullException.ThrowIfNull(schedule);
+        ArgumentException.ThrowIfNullOrWhiteSpace(schedule.Queue);
+        ArgumentOutOfRangeException.ThrowIfLessThan(schedule.PayloadVersion, 1);
         if ((schedule.RunAt is null) == (schedule.CronExpression is null)) throw new ArgumentException("Specify exactly one of RunAt or CronExpression.", nameof(schedule));
         _ = TimeZoneInfo.FindSystemTimeZoneById(schedule.TimeZoneId);
         if (schedule.CronExpression is not null) _ = CronSchedule.Parse(schedule.CronExpression);

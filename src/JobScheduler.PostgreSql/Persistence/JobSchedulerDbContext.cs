@@ -22,6 +22,8 @@ public sealed class JobSchedulerDbContext(NpgsqlDataSource dataSource) : DbConte
         job.HasKey(x => x.Id).HasName("pk_job_scheduler_jobs");
         job.Property(x => x.Id).HasColumnName("id"); job.Property(x => x.Type).HasColumnName("type");
         job.Property(x => x.Payload).HasColumnName("payload"); job.Property(x => x.EnqueuedAt).HasColumnName("enqueued_at");
+        job.Property(x => x.PayloadVersion).HasColumnName("payload_version");
+        job.Property(x => x.AttemptHistory).HasColumnName("attempt_history").HasColumnType("jsonb");
         job.Property(x => x.ScheduledAt).HasColumnName("scheduled_at"); job.Property(x => x.Status).HasColumnName("status").HasConversion<short>();
         job.Property(x => x.Attempt).HasColumnName("attempt"); job.Property(x => x.Failure).HasColumnName("failure");
         job.Property(x => x.FailureKind).HasColumnName("failure_kind").HasConversion<short?>();
@@ -41,9 +43,12 @@ public sealed class JobSchedulerDbContext(NpgsqlDataSource dataSource) : DbConte
         schedule.HasKey(x => x.Id).HasName("pk_job_scheduler_schedules");
         schedule.Property(x => x.Id).HasColumnName("id"); schedule.Property(x => x.JobType).HasColumnName("job_type");
         schedule.Property(x => x.Payload).HasColumnName("payload"); schedule.Property(x => x.CronExpression).HasColumnName("cron_expression");
+        schedule.Property(x => x.PayloadVersion).HasColumnName("payload_version");
         schedule.Property(x => x.TimeZoneId).HasColumnName("time_zone_id"); schedule.Property(x => x.MisfirePolicy).HasColumnName("misfire_policy").HasConversion<short>();
         schedule.Property(x => x.NextOccurrence).HasColumnName("next_occurrence"); schedule.Property(x => x.IsPaused).HasColumnName("is_paused");
         schedule.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
+        schedule.Property(x => x.Queue).HasColumnName("queue"); schedule.Property(x => x.Priority).HasColumnName("priority");
+        schedule.Property(x => x.DeduplicationKey).HasColumnName("deduplication_key"); schedule.Property(x => x.CorrelationId).HasColumnName("correlation_id");
         schedule.HasIndex(x => new { x.NextOccurrence, x.Id }, "ix_job_scheduler_schedules_due").HasFilter("is_paused = false");
     }
 }

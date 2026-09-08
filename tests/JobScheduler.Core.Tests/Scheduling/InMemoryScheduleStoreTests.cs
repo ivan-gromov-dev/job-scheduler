@@ -88,6 +88,33 @@ public sealed class InMemoryScheduleStoreTests
         Assert.Equal(0, await schedules.MaterializeDueAsync(Start.AddHours(3).AddMinutes(1), 2));
     }
 
+    [Fact]
+    public async Task MaterializationCarriesDurableJobOptions()
+    {
+        var clock = new FixedTimeProvider(Start);
+        var jobs = new InMemoryJobStore(clock);
+        using var schedules = new InMemoryScheduleStore(jobs, clock);
+        var options = new ScheduleOptions
+        {
+            RunAt = Start,
+            Queue = "critical",
+            Priority = 42,
+            DeduplicationKey = "invoice-7",
+            CorrelationId = "request-9",
+            PayloadVersion = 3,
+        };
+
+        await schedules.CreateAsync("invoice", "{}", options);
+        await schedules.MaterializeDueAsync(Start);
+        var job = (await jobs.ClaimAsync(TimeSpan.FromMinutes(1)))!.Job;
+
+        Assert.Equal("critical", job.Queue);
+        Assert.Equal(42, job.Priority);
+        Assert.Equal("invoice-7", job.DeduplicationKey);
+        Assert.Equal("request-9", job.CorrelationId);
+        Assert.Equal(3, job.PayloadVersion);
+    }
+
     private static TimeZoneInfo FindBerlinTimeZone()
     {
         foreach (var id in new[] { "Europe/Berlin", "W. Europe Standard Time" })

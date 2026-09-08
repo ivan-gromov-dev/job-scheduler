@@ -7,6 +7,13 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ### Added
 
+- Durable job contracts with explicit stable type names, payload versions, aliases,
+  sequential upcasters, and a provider-neutral configurable payload serializer.
+- Schedule-level queue, priority, deduplication, and correlation options propagated to
+  every materialized job.
+- Worker identity and durable per-attempt history covering claims, lease renewals,
+  duration, outcome, failure classification, and retry timing.
+
 - Operational job metadata for queues, priorities, and correlation identifiers;
   bounded queues provide explicit backpressure and queue-aware claiming supports
   per-queue worker concurrency.

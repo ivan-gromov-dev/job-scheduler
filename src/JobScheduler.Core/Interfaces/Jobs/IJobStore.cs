@@ -23,6 +23,13 @@ public interface IJobStore
         IReadOnlyCollection<string> queues,
         CancellationToken cancellationToken = default);
 
+    ValueTask<JobLease?> ClaimAsync(
+        TimeSpan leaseDuration,
+        IReadOnlyCollection<string> queues,
+        string workerId,
+        CancellationToken cancellationToken = default) =>
+        ClaimAsync(leaseDuration, queues, cancellationToken);
+
     ValueTask<bool> CompleteAsync(JobLease lease, CancellationToken cancellationToken = default);
 
     ValueTask<bool> FailAsync(

@@ -51,7 +51,7 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
                 throw new QueueFullException(options.Queue, maximum);
             }
 
-            var job = Job.Create(type, payload, now, options.ScheduledAt, key, options.Queue, options.Priority, options.CorrelationId);
+            var job = Job.Create(type, payload, now, options.ScheduledAt, key, options.Queue, options.Priority, options.CorrelationId, options.PayloadVersion);
             jobs.Add(job.Id, new StoredJob(job));
             return ValueTask.FromResult(job);
         }
@@ -65,9 +65,16 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
     public ValueTask<JobLease?> ClaimAsync(
         TimeSpan leaseDuration,
         IReadOnlyCollection<string> queues,
+        CancellationToken cancellationToken = default) => ClaimAsync(leaseDuration, queues, "unknown", cancellationToken);
+
+    public ValueTask<JobLease?> ClaimAsync(
+        TimeSpan leaseDuration,
+        IReadOnlyCollection<string> queues,
+        string workerId,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(queues);
+        ArgumentException.ThrowIfNullOrWhiteSpace(workerId);
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(leaseDuration, TimeSpan.Zero);
         var now = timeProvider.GetUtcNow();
@@ -93,10 +100,11 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
                 Status = JobStatus.Processing,
                 Attempt = stored.Job.Attempt + 1,
                 Failure = null,
+                AttemptHistory = [.. stored.Job.AttemptHistory, new JobAttempt { Number = stored.Job.Attempt + 1, WorkerId = workerId, ClaimedAt = now, LeaseExpiresAt = expiresAt }],
             };
             stored.LeaseToken = token;
             stored.LeaseExpiresAt = expiresAt;
-            return ValueTask.FromResult<JobLease?>(new JobLease(stored.Job, token, expiresAt));
+            return ValueTask.FromResult<JobLease?>(new JobLease(stored.Job, token, expiresAt, workerId));
         }
     }
 
@@ -141,7 +149,10 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
 
             var expiresAt = timeProvider.GetUtcNow().Add(leaseDuration);
             stored.LeaseExpiresAt = expiresAt;
-            return ValueTask.FromResult<JobLease?>(new JobLease(stored.Job, lease.Token, expiresAt));
+            var history = stored.Job.AttemptHistory.ToArray();
+            history[^1] = history[^1] with { LastRenewedAt = timeProvider.GetUtcNow(), LeaseExpiresAt = expiresAt };
+            stored.Job = stored.Job with { AttemptHistory = history };
+            return ValueTask.FromResult<JobLease?>(new JobLease(stored.Job, lease.Token, expiresAt, lease.WorkerId));
         }
     }
 
@@ -264,6 +275,16 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
                 return ValueTask.FromResult(false);
             }
 
+            var finishedAt = timeProvider.GetUtcNow();
+            var history = stored.Job.AttemptHistory.ToArray();
+            history[^1] = history[^1] with
+            {
+                FinishedAt = finishedAt,
+                Outcome = status,
+                Failure = failure?.Message,
+                FailureKind = failure?.Kind,
+                RetryAt = status == JobStatus.Pending ? scheduledAt : null,
+            };
             stored.Job = stored.Job with
             {
                 Status = status,
@@ -271,7 +292,8 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
                 FailureKind = failure?.Kind,
                 ScheduledAt = scheduledAt ?? stored.Job.ScheduledAt,
                 CompletedAt = status is JobStatus.Succeeded or JobStatus.Failed or JobStatus.Canceled or JobStatus.DeadLettered
-                    ? timeProvider.GetUtcNow() : null,
+                    ? finishedAt : null,
+                AttemptHistory = history,
             };
             stored.LeaseToken = null;
             stored.LeaseExpiresAt = null;
