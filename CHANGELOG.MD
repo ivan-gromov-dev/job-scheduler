@@ -5,7 +5,15 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ## Unreleased
 
+## [1.0.0] - 2026-09-08
+
 ### Added
+
+- Stable 1.0 public API documentation, compatibility checks, performance and soak
+  suites, runnable examples, upgrade and support policies, and a security threat model.
+- Reproducible `JobScheduler.Core`, `JobScheduler.Worker`, and
+  `JobScheduler.PostgreSql` NuGet packages with symbols, Source Link, and tag-driven
+  publishing.
 
 - Operational-control APIs with cursor-based filtered job and schedule inspection,
   bulk cancellation and dead-letter replay, manual schedule triggering, next-run and

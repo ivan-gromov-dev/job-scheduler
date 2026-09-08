@@ -3,129 +3,78 @@
 This roadmap favors correctness and explicit delivery semantics over feature count.
 The target baseline is **at-least-once execution** with idempotent handlers.
 
-## Guiding decisions
+## Post-1.0 Milestone 10 — Contract hardening
 
-- Keep the domain and public contracts independent from storage and hosting.
-- Use UTC timestamps through `DateTimeOffset` and inject time in runtime components.
-- Claim jobs with a time-limited lease so abandoned work can be recovered.
-- Treat retries, cancellation, deduplication, and observability as core behavior.
-- Start with one process, but avoid designs that prevent multiple workers later.
+- [ ] Define permanent-failure behavior for unknown job types, unsupported payload
+      versions, missing upcasters, malformed payloads, and serializer failures.
+- [ ] Specify replay semantics for attempts, history, deduplication, queue capacity,
+      and optional payload or routing changes.
+- [ ] Complete and document the lifecycle transition matrix, including idempotency and
+      conflict outcomes for concurrent cancel, replay, claim, and completion operations.
+- [ ] Add provider contract tests that run the same lifecycle, scheduling,
+      administration, and pagination scenarios against in-memory and PostgreSQL stores.
+- [ ] Define validation and storage limits for payloads, identifiers, priorities,
+      queue counts, durations, retry policies, and schedule catch-up.
+- [ ] Define optimistic-concurrency or explicit last-write-wins behavior for schedule
+      updates racing with pause, delete, trigger, and materialization operations.
+- [ ] Persist and expose schedule-materialization failures without silently disabling
+      a schedule or reporting the materializer as healthy.
 
-## Milestone 1 — In-memory MVP
+Exit criterion: invalid data, incompatible jobs, and concurrent control operations have
+provider-consistent, observable, and explicitly documented outcomes.
 
-- [x] Define enqueue, schedule, claim, complete, fail, and cancel contracts.
-- [x] Implement a concurrency-safe in-memory store.
-- [x] Add typed job handlers and dependency-injection registration.
-- [x] Implement a worker loop with bounded concurrency and graceful shutdown.
-- [x] Support delayed jobs and deterministic tests through `TimeProvider`.
-- [x] Document lifecycle transitions and at-least-once semantics.
+## Post-1.0 Milestone 11 — Sustained operations
 
-Exit criterion: an application can enqueue immediate or delayed jobs and process them
-reliably within one process, with complete unit and integration coverage.
+- [ ] Add configurable retention and batched cleanup for succeeded, canceled, and
+      terminal jobs, attempt history, and schedule materialization history.
+- [ ] Define queue and priority fairness, and prevent or explicitly expose starvation
+      of low-priority work.
+- [ ] Harden recovery from retry and lease-reclamation storms with bounded backoff,
+      jitter, and predictable behavior after storage outages or clock changes.
+- [ ] Add long-running storage-growth, backlog, contention, and recovery tests for the
+      retention, fairness, and retry guarantees.
 
-## Milestone 2 — Failure handling
+Exit criterion: scheduler throughput and storage remain bounded and predictable under
+long-running workloads, large backlogs, and recovery bursts.
 
-- [x] Add configurable retry policies with exponential backoff and jitter.
-- [x] Distinguish transient, permanent, timeout, and cancellation failures.
-- [x] Add execution timeouts and lease renewal for long-running handlers.
-- [x] Add dead-letter storage, inspection, replay, and retention rules.
-- [x] Define idempotency and optional deduplication keys.
+## Post-1.0 Milestone 12 — Delivery integration and execution control
 
-Exit criterion: failed and abandoned jobs have deterministic, testable outcomes.
+- [ ] Provide transactional outbox and inbox integration patterns for coordinating job
+      publication and idempotent consumption with application data.
+- [ ] Add optional typed job results with explicit retention and retrieval semantics.
+- [ ] Add rate limits independent of worker concurrency, with queue, job-type, and
+      external-service scopes.
+- [ ] Support distributed cancellation signals for running jobs while preserving clear
+      behavior for handlers that do not cooperate with cancellation.
 
-## Milestone 3 — Durable PostgreSQL storage
+Exit criterion: applications can coordinate delivery with business transactions,
+control execution rates, and observe or cancel active work across worker processes.
 
-- [x] Design versioned schema and migrations.
-- [x] Implement atomic multi-worker claiming with leases.
-- [x] Add optimistic concurrency and recovery of expired leases.
-- [x] Add indexes and polling behavior for immediate and scheduled workloads.
-- [x] Run crash, restart, contention, and migration integration tests.
+## Post-1.0 Milestone 13 — Operator experience
 
-Exit criterion: multiple worker processes can safely share a durable queue without
-losing accepted jobs.
+- [ ] Provide supported administrative HTTP and CLI adapters for job and schedule
+      inspection, cancellation, replay, triggering, and draining.
+- [ ] Define authentication, authorization, and audit requirements for destructive or
+      sensitive administrative operations.
+- [ ] Add an optional dashboard for queue health, active work, failures, schedules,
+      materialization history, and drain progress.
 
-## Milestone 4 — Scheduling
+Exit criterion: operators can securely inspect and control the scheduler without
+building a custom adapter or accessing the database directly.
 
-- [x] Add one-off scheduling and recurring schedules.
-- [x] Define cron syntax, time-zone handling, and daylight-saving behavior.
-- [x] Define misfire policy: skip, coalesce, or catch up.
-- [x] Prevent duplicate materialization across scheduler instances.
-- [x] Add pause, resume, update, and delete operations for schedules.
+## Post-1.0 Milestone 14 — Composition and provider ecosystem
 
-Exit criterion: recurring jobs behave predictably across restarts and clock changes.
+- [ ] Add batches and continuation jobs with explicit partial-failure and cancellation
+      behavior.
+- [ ] Evaluate chains or DAG orchestration as a separate layer without weakening the
+      core queue's delivery semantics.
+- [ ] Define a storage-provider conformance suite and use it to qualify additional
+      durable providers.
 
-## Milestone 5 — Operations and observability
-
-- [x] Add structured logs with job, attempt, queue, and correlation identifiers.
-- [x] Add OpenTelemetry traces and metrics for latency, throughput, retries, and lag.
-- [x] Add health/readiness checks and graceful draining.
-- [x] Add queue limits, backpressure, priorities, and per-queue concurrency controls.
-- [x] Provide an administrative API/CLI for inspection, cancellation, and replay.
-
-Exit criterion: operators can diagnose behavior and safely control a running system.
-
-## Milestone 6 — Execution correctness
-
-- [x] Treat lost leases as an explicit execution outcome and do not report stale
-      complete, retry, or dead-letter transitions as successful.
-- [x] Cancel local execution when lease renewal fails and prevent further lifecycle
-      transitions from the former owner.
-- [x] Define timeout behavior for handlers that do not cooperate with cancellation and
-      prevent a retry from overlapping the timed-out invocation within the same process.
-- [x] Make draining configurable and coordinate worker shutdown with schedule
-      materialization and active handler completion.
-- [x] Move dead-letter retention out of claim loops into a periodic, single-owner,
-      batched maintenance service.
-
-Exit criterion: every invocation has an authoritative lease-aware outcome, and
-timeouts, maintenance, and shutdown cannot silently create conflicting execution.
-
-## Milestone 7 — Durable job and schedule contracts
-
-- [x] Add stable explicit job type names independent of CLR namespaces and type
-      renames.
-- [x] Version serialized payloads and support aliases or upcasters for jobs persisted
-      by older application versions.
-- [x] Make serializer behavior configurable without coupling core contracts to a
-      storage provider.
-- [x] Carry queue, priority, deduplication, and correlation options through one-off and
-      recurring schedules.
-- [x] Record worker identity and durable attempt history, including claim, renewal,
-      duration, outcome, failure, and retry timing.
-
-Exit criterion: persisted jobs and schedules remain executable and diagnosable across
-application upgrades and worker instances.
-
-## Milestone 8 — Operational control
-
-- [x] Add cursor-based job and schedule listing with filters for time, type, status,
-      queue, and correlation identifier.
-- [x] Add bulk cancellation and replay plus manual triggering of schedules and
-      inspection of their next occurrence and materialization history.
-- [x] Add storage and schema readiness checks, schedule-materializer health, and
-      propagation of fatal background-service failures.
-- [x] Support an explicit schema-validation mode that refuses to start against a
-      missing or incompatible database without applying migrations.
-- [x] Expose administrative draining and report drain progress and active work.
-
-Exit criterion: operators can determine whether the complete scheduler is ready,
-inspect durable work, and control it without direct database access.
-
-## Milestone 9 — Packaging and release
-
-- [ ] Stabilize and document the public API.
-- [ ] Add compatibility, performance, and soak-test suites.
-- [ ] Publish versioned NuGet packages with symbols and source links.
-- [ ] Add upgrade guides, examples, and a support/versioning policy.
-- [ ] Perform a security and threat-model review.
-
-Exit criterion: a reproducible release is ready for use outside this repository.
+Exit criterion: higher-level composition and additional providers extend the scheduler
+through explicit contracts rather than provider-specific behavior.
 
 ## Explicitly deferred
 
-- Exactly-once execution claims; external side effects make this misleading without
-  application-level idempotency or transactional integration.
-- A web dashboard before the administrative contracts and telemetry are stable.
-- Additional storage providers before the PostgreSQL contract is proven.
-- Distributed workflow/DAG orchestration; this project begins as a job queue and
-  scheduler, not a general workflow engine.
+- Exactly-once execution claims remain out of scope even after transactional outbox
+  and inbox support; external side effects still require application-level idempotency.

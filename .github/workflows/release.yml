@@ -1,0 +1,40 @@
+name: Release packages
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: nuget
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Validate tag version
+        shell: bash
+        run: test "${GITHUB_REF_NAME}" = "v$(grep -oPm1 '(?<=<VersionPrefix>)[^<]+' Directory.Build.props)"
+      - name: Verify release
+        run: dotnet run --project tools/JobScheduler.Harness -- implement
+      - name: Pack release artifacts
+        run: dotnet pack JobScheduler.slnx --configuration Release --no-build --output artifacts/packages
+      - name: Exchange OIDC token for temporary NuGet API key
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish packages
+        run: dotnet nuget push 'artifacts/packages/*.nupkg' --source https://api.nuget.org/v3/index.json --skip-duplicate --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/packages/*.*nupkg

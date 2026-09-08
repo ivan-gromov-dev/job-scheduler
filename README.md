@@ -70,6 +70,17 @@ and day-of-week use cron OR semantics when both are restricted. A missed occurre
 can be skipped, coalesced into one job at materialization time, or caught up in order;
 the per-poll catch-up limit prevents an unbounded burst without discarding backlog.
 
+## Packages
+
+- `JobScheduler.Core` contains provider-neutral contracts and the in-memory store.
+- `JobScheduler.Worker` contains hosted execution and schedule materialization.
+- `JobScheduler.PostgreSql` contains durable PostgreSQL persistence and migrations.
+
+Versioned packages include symbols and Source Link. Release tags publish packages
+through the protected release workflow. See the [public API](docs/PUBLIC-API.md),
+[upgrade guide](docs/UPGRADING.md), [support policy](docs/SUPPORT.md), and
+[security policy](SECURITY.md).
+
 ## In-process usage
 
 Register the worker and each typed handler with dependency injection:
@@ -111,4 +122,5 @@ background and storage/schema health. Set `AutoMigrate = false` and
 `ValidateSchemaOnStartup = true` to refuse startup when the database is missing or
 has pending migrations without changing its schema.
 Throw `JobExecutionException` with a permanent or cancellation classification when a
-failure must not be retried. The public API is not yet declared stable.
+failure must not be retried. A complete runnable host is in
+[`examples/JobScheduler.Example`](examples/JobScheduler.Example).
