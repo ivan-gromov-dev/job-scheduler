@@ -7,6 +7,12 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ### Added
 
+- Operational-control APIs with cursor-based filtered job and schedule inspection,
+  bulk cancellation and dead-letter replay, manual schedule triggering, next-run and
+  materialization history visibility.
+- Storage/schema and schedule-materializer readiness checks, fail-fast schema
+  validation without migration, and administrative worker draining with progress.
+
 - Durable job contracts with explicit stable type names, payload versions, aliases,
   sequential upcasters, and a provider-neutral configurable payload serializer.
 - Schedule-level queue, priority, deduplication, and correlation options propagated to

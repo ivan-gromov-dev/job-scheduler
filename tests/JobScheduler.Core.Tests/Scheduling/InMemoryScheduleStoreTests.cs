@@ -115,6 +115,26 @@ public sealed class InMemoryScheduleStoreTests
         Assert.Equal(3, job.PayloadVersion);
     }
 
+    [Fact]
+    public async Task AdministrationListsTriggersAndRecordsMaterializationHistory()
+    {
+        var clock = new FixedTimeProvider(Start);
+        var jobs = new InMemoryJobStore(clock);
+        using var schedules = new InMemoryScheduleStore(jobs, clock);
+        var first = await schedules.CreateAsync("invoice", "{}", new ScheduleOptions { RunAt = Start.AddHours(1), Queue = "ops", CorrelationId = "request-1" });
+        await schedules.CreateAsync("email", "{}", new ScheduleOptions { RunAt = Start.AddHours(2) });
+
+        var page = await schedules.ListAsync(new ScheduleQuery { JobType = "invoice", Queue = "ops", CorrelationId = "request-1", NextThrough = Start.AddHours(1), Limit = 1 });
+        var triggered = await schedules.TriggerAsync(first.Id);
+        var inspected = await schedules.GetAsync(first.Id);
+
+        Assert.Equal(first.Id, Assert.Single(page.Items).Id);
+        Assert.Null(page.NextCursor);
+        Assert.NotNull(triggered);
+        Assert.Equal(triggered.Id, Assert.Single(inspected!.MaterializationHistory).JobId);
+        Assert.Null(await schedules.TriggerAsync(Guid.NewGuid()));
+    }
+
     private static TimeZoneInfo FindBerlinTimeZone()
     {
         foreach (var id in new[] { "Europe/Berlin", "W. Europe Standard Time" })

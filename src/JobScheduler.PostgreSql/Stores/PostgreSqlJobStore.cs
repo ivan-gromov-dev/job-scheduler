@@ -146,6 +146,15 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
         var jobs = context.Jobs.AsNoTracking().AsQueryable();
         if (query.Queue is not null) jobs = jobs.Where(job => job.Queue == query.Queue);
         if (query.Status is not null) jobs = jobs.Where(job => job.Status == query.Status);
+        if (query.Type is not null) jobs = jobs.Where(job => job.Type == query.Type);
+        if (query.CorrelationId is not null) jobs = jobs.Where(job => job.CorrelationId == query.CorrelationId);
+        if (query.EnqueuedFrom is not null) jobs = jobs.Where(job => job.EnqueuedAt >= query.EnqueuedFrom.Value.ToUniversalTime());
+        if (query.EnqueuedThrough is not null) jobs = jobs.Where(job => job.EnqueuedAt <= query.EnqueuedThrough.Value.ToUniversalTime());
+        if (query.Cursor is not null)
+        {
+            var cursor = JobCursor.Decode(query.Cursor);
+            jobs = jobs.Where(job => job.EnqueuedAt < cursor.EnqueuedAt || (job.EnqueuedAt == cursor.EnqueuedAt && job.Id.CompareTo(cursor.Id) > 0));
+        }
         var entities = await jobs.OrderByDescending(job => job.EnqueuedAt).ThenBy(job => job.Id).Take(query.Limit).ToArrayAsync(cancellationToken);
         return entities.Select(job => job.ToJob()).ToArray();
     }

@@ -19,6 +19,12 @@ public static class PostgreSqlServiceCollectionExtensions
         services.AddSingleton<IJobStore>(provider => provider.GetRequiredService<PostgreSqlJobStore>());
         services.AddSingleton<PostgreSqlScheduleStore>();
         services.AddSingleton<IScheduleStore>(provider => provider.GetRequiredService<PostgreSqlScheduleStore>());
+        services.AddHealthChecks().AddCheck<PostgreSqlReadinessHealthCheck>("job_scheduler_postgresql", tags: ["ready"]);
+        if (options.ValidateSchemaOnStartup)
+        {
+            if (options.AutoMigrate) throw new InvalidOperationException("Schema validation mode cannot be combined with automatic migrations.");
+            services.AddHostedService<PostgreSqlSchemaValidationService>();
+        }
         return services;
     }
 }

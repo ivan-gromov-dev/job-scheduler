@@ -248,13 +248,21 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
             var result = jobs.Values.Select(candidate => candidate.Job)
                 .Where(job => query.Queue is null || job.Queue == query.Queue)
                 .Where(job => query.Status is null || job.Status == query.Status)
+                .Where(job => query.Type is null || job.Type == query.Type)
+                .Where(job => query.CorrelationId is null || job.CorrelationId == query.CorrelationId)
+                .Where(job => query.EnqueuedFrom is null || job.EnqueuedAt >= query.EnqueuedFrom.Value.ToUniversalTime())
+                .Where(job => query.EnqueuedThrough is null || job.EnqueuedAt <= query.EnqueuedThrough.Value.ToUniversalTime())
                 .OrderByDescending(job => job.EnqueuedAt)
                 .ThenBy(job => job.Id)
+                .Where(job => query.Cursor is null || IsAfterCursor(job, JobCursor.Decode(query.Cursor)))
                 .Take(query.Limit)
                 .ToArray();
             return ValueTask.FromResult<IReadOnlyList<Job>>(result);
         }
     }
+
+    private static bool IsAfterCursor(Job job, (DateTimeOffset EnqueuedAt, Guid Id) cursor) =>
+        job.EnqueuedAt < cursor.EnqueuedAt || (job.EnqueuedAt == cursor.EnqueuedAt && job.Id.CompareTo(cursor.Id) > 0);
 
     private ValueTask<bool> FinishAsync(
         JobLease lease,

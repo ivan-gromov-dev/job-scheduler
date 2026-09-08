@@ -49,6 +49,7 @@ public sealed class JobSchedulerDbContext(NpgsqlDataSource dataSource) : DbConte
         schedule.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
         schedule.Property(x => x.Queue).HasColumnName("queue"); schedule.Property(x => x.Priority).HasColumnName("priority");
         schedule.Property(x => x.DeduplicationKey).HasColumnName("deduplication_key"); schedule.Property(x => x.CorrelationId).HasColumnName("correlation_id");
+        schedule.Property(x => x.MaterializationHistory).HasColumnName("materialization_history").HasColumnType("jsonb");
         schedule.HasIndex(x => new { x.NextOccurrence, x.Id }, "ix_job_scheduler_schedules_due").HasFilter("is_paused = false");
     }
 }

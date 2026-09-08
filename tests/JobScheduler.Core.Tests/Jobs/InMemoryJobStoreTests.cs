@@ -298,6 +298,28 @@ public sealed class InMemoryJobStoreTests
         Assert.True(await administration.ReplayAsync(pending.Id));
     }
 
+    [Fact]
+    public async Task AdministrationPagesWithOperationalFiltersAndBulkControls()
+    {
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddSingleton<TimeProvider>(new TestTimeProvider(Start));
+        services.AddJobScheduler();
+        await using var provider = services.BuildServiceProvider();
+        var store = provider.GetRequiredService<IJobStore>();
+        var administration = provider.GetRequiredService<IJobAdministration>();
+        var first = await store.EnqueueAsync("invoice", "1", new JobEnqueueOptions { Queue = "ops", CorrelationId = "batch-7" });
+        var second = await store.EnqueueAsync("invoice", "2", new JobEnqueueOptions { Queue = "ops", CorrelationId = "batch-7" });
+        await store.EnqueueAsync("email", "3");
+
+        var page = await administration.ListPageAsync(new JobQuery { Type = "invoice", CorrelationId = "batch-7", EnqueuedFrom = Start, EnqueuedThrough = Start, Limit = 1 });
+        var next = await administration.ListPageAsync(new JobQuery { Type = "invoice", CorrelationId = "batch-7", Cursor = page.NextCursor, Limit = 1 });
+
+        Assert.Single(page.Items);
+        Assert.Single(next.Items);
+        Assert.NotEqual(page.Items[0].Id, next.Items[0].Id);
+        Assert.Equal(2, await administration.CancelAsync([first.Id, second.Id, Guid.NewGuid()]));
+    }
+
     private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;

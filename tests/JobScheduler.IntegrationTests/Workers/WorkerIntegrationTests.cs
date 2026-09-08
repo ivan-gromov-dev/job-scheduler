@@ -212,12 +212,19 @@ public sealed class WorkerIntegrationTests
         await state.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(HealthStatus.Healthy, (await health.CheckHealthAsync()).Status);
 
+        var control = provider.GetRequiredService<IJobWorkerControl>();
+        Assert.Equal(1, control.GetProgress().ActiveJobs);
+
+        var draining = control.BeginDrain();
+        Assert.True(draining.IsDraining);
+        Assert.False(draining.IsComplete);
         var stop = worker.StopAsync(CancellationToken.None);
         await Task.Delay(20);
         Assert.False(stop.IsCompleted);
         Assert.Equal(HealthStatus.Unhealthy, (await health.CheckHealthAsync()).Status);
         state.Release.TrySetResult();
         await stop.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(control.GetProgress().IsComplete);
     }
 
     [Fact]

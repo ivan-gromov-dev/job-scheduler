@@ -6,5 +6,15 @@ public sealed record JobQuery
 
     public JobStatus? Status { get; init; }
 
+    public string? Type { get; init; }
+
+    public string? CorrelationId { get; init; }
+
+    public DateTimeOffset? EnqueuedFrom { get; init; }
+
+    public DateTimeOffset? EnqueuedThrough { get; init; }
+
+    public string? Cursor { get; init; }
+
     public int Limit { get; init; } = 100;
 }
