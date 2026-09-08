@@ -56,6 +56,47 @@ public sealed class InMemoryJobStoreTests
         Assert.Equal(JobStatus.Succeeded, (await store.GetAsync(job.Id))!.Status);
     }
 
+    [Theory]
+    [InlineData("complete")]
+    [InlineData("fail")]
+    [InlineData("retry")]
+    [InlineData("dead-letter")]
+    public async Task ExpiredLeaseCannotWriteLifecycleTransition(string transition)
+    {
+        var time = new TestTimeProvider(Start);
+        var store = new InMemoryJobStore(time);
+        await store.EnqueueAsync("test", "{}");
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+        time.Advance(TimeSpan.FromMinutes(1));
+
+        var changed = transition switch
+        {
+            "complete" => await store.CompleteAsync(lease!),
+            "fail" => await store.FailAsync(lease!, "failure"),
+            "retry" => await store.RetryAsync(lease!, new JobFailure(JobFailureKind.Transient, "failure"), Start),
+            "dead-letter" => await store.DeadLetterAsync(lease!, new JobFailure(JobFailureKind.Permanent, "failure")),
+            _ => throw new ArgumentOutOfRangeException(nameof(transition)),
+        };
+
+        Assert.False(changed);
+        Assert.Equal(JobStatus.Processing, (await store.GetAsync(lease!.Job.Id))!.Status);
+    }
+
+    [Fact]
+    public async Task ExpiredLeaseCannotWriteAnyTerminalOutcomeBeforeReclaim()
+    {
+        var time = new TestTimeProvider(Start);
+        var store = new InMemoryJobStore(time);
+        await store.EnqueueAsync("test", "{}");
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+        time.Advance(TimeSpan.FromMinutes(1));
+
+        Assert.False(await store.CompleteAsync(lease!));
+        Assert.False(await store.FailAsync(lease!, "stale"));
+        Assert.False(await store.RetryAsync(lease!, new JobFailure(JobFailureKind.Transient, "stale"), Start));
+        Assert.False(await store.DeadLetterAsync(lease!, new JobFailure(JobFailureKind.Permanent, "stale")));
+    }
+
     [Fact]
     public async Task FailRecordsFailure()
     {
@@ -157,6 +198,28 @@ public sealed class InMemoryJobStoreTests
         time.Advance(TimeSpan.FromDays(2));
         Assert.Equal(1, await store.PurgeDeadLettersAsync(Start.AddDays(1)));
         Assert.Null(await store.GetAsync(first.Id));
+    }
+
+    [Fact]
+    public async Task DeadLetterMaintenancePurgesInBoundedBatches()
+    {
+        var time = new TestTimeProvider(Start);
+        var store = new InMemoryJobStore(time);
+        for (var index = 0; index < 3; index++)
+        {
+            await store.EnqueueAsync("test", index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+            await store.DeadLetterAsync(lease!, new JobFailure(JobFailureKind.Permanent, "invalid"));
+        }
+
+        time.Advance(TimeSpan.FromDays(2));
+        var first = await store.PurgeDeadLettersBatchAsync(Start.AddDays(1), 2);
+        var second = await store.PurgeDeadLettersBatchAsync(Start.AddDays(1), 2);
+
+        Assert.True(first.IsOwner);
+        Assert.Equal(2, first.PurgedCount);
+        Assert.Equal(1, second.PurgedCount);
+        Assert.Empty(await store.GetDeadLettersAsync());
     }
 
     [Fact]

@@ -102,6 +102,26 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
         return await context.Jobs.Where(x => x.Status == JobStatus.DeadLettered && x.CompletedAt < cutoff).ExecuteDeleteAsync(cancellationToken);
     }
 
+    public async ValueTask<DeadLetterMaintenanceResult> PurgeDeadLettersBatchAsync(DateTimeOffset completedBefore, int batchSize, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1); await EnsureMigratedAsync(cancellationToken);
+        const string sql = """
+            WITH ownership AS (SELECT pg_try_advisory_xact_lock(1246705014) AS acquired),
+            victims AS (SELECT j.id FROM job_scheduler_jobs j, ownership
+              WHERE ownership.acquired AND status=4 AND completed_at < $1
+              ORDER BY completed_at, j.id LIMIT $2 FOR UPDATE OF j SKIP LOCKED),
+            deleted AS (DELETE FROM job_scheduler_jobs j USING victims WHERE j.id=victims.id RETURNING 1)
+            SELECT ownership.acquired, (SELECT count(*) FROM deleted) FROM ownership
+            """;
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue(completedBefore.ToUniversalTime()); command.Parameters.AddWithValue(batchSize);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken); await reader.ReadAsync(cancellationToken);
+        var result = new DeadLetterMaintenanceResult(reader.GetBoolean(0), checked((int)reader.GetInt64(1)));
+        await reader.DisposeAsync(); await transaction.CommitAsync(cancellationToken); return result;
+    }
+
     public async ValueTask<bool> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         await EnsureMigratedAsync(cancellationToken); await using var context = new JobSchedulerDbContext(dataSource); var now = timeProvider.GetUtcNow();
@@ -129,8 +149,8 @@ public sealed class PostgreSqlJobStore(NpgsqlDataSource dataSource, PostgreSqlJo
     {
         ArgumentNullException.ThrowIfNull(lease); if (failure is null && status is JobStatus.Pending or JobStatus.DeadLettered) throw new ArgumentNullException(nameof(failure));
         await EnsureMigratedAsync(cancellationToken); DateTimeOffset? completedAt = status == JobStatus.Pending ? null : timeProvider.GetUtcNow();
-        const string sql = "UPDATE job_scheduler_jobs SET status=$1,failure=$2,failure_kind=$3,scheduled_at=COALESCE($4,scheduled_at),completed_at=$5,lease_token=NULL,lease_expires_at=NULL,row_version=row_version+1 WHERE id=$6 AND status=1 AND lease_token=$7";
-        await using var command = dataSource.CreateCommand(sql); command.Parameters.AddWithValue((short)status); command.Parameters.AddWithValue((object?)failure?.Message ?? DBNull.Value); command.Parameters.AddWithValue(failure is null ? DBNull.Value : (short)failure.Kind); command.Parameters.AddWithValue((object?)scheduledAt ?? DBNull.Value); command.Parameters.AddWithValue((object?)completedAt ?? DBNull.Value); command.Parameters.AddWithValue(lease.Job.Id); command.Parameters.AddWithValue(lease.Token);
+        const string sql = "UPDATE job_scheduler_jobs SET status=$1,failure=$2,failure_kind=$3,scheduled_at=COALESCE($4,scheduled_at),completed_at=$5,lease_token=NULL,lease_expires_at=NULL,row_version=row_version+1 WHERE id=$6 AND status=1 AND lease_token=$7 AND lease_expires_at>$8";
+        await using var command = dataSource.CreateCommand(sql); command.Parameters.AddWithValue((short)status); command.Parameters.AddWithValue((object?)failure?.Message ?? DBNull.Value); command.Parameters.AddWithValue(failure is null ? DBNull.Value : (short)failure.Kind); command.Parameters.AddWithValue((object?)scheduledAt ?? DBNull.Value); command.Parameters.AddWithValue((object?)completedAt ?? DBNull.Value); command.Parameters.AddWithValue(lease.Job.Id); command.Parameters.AddWithValue(lease.Token); command.Parameters.AddWithValue(timeProvider.GetUtcNow());
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 

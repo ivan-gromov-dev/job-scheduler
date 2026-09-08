@@ -77,9 +77,14 @@ public sealed class PostgreSqlJobStoreIntegrationTests
         Assert.NotNull(replayed);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             second.RenewLeaseAsync(replayed!, TimeSpan.FromMinutes(-1)).AsTask());
-        Assert.True(await first.DeadLetterAsync(replayed, new JobFailure(JobFailureKind.Permanent, "again")));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.False(await first.DeadLetterAsync(replayed, new JobFailure(JobFailureKind.Permanent, "stale")));
+        var replayedByNewOwner = await second.ClaimAsync(TimeSpan.FromMinutes(1));
+        Assert.True(await first.DeadLetterAsync(replayedByNewOwner!, new JobFailure(JobFailureKind.Permanent, "again")));
         clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.Equal(1, await second.PurgeDeadLettersAsync(clock.GetUtcNow()));
+        var maintenance = await second.PurgeDeadLettersBatchAsync(clock.GetUtcNow(), 1);
+        Assert.True(maintenance.IsOwner);
+        Assert.Equal(1, maintenance.PurgedCount);
         Assert.Empty(await first.GetDeadLettersAsync());
 
         await ResetAsync(dataSource);

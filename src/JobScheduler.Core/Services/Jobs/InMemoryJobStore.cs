@@ -182,6 +182,27 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
         }
     }
 
+    public ValueTask<DeadLetterMaintenanceResult> PurgeDeadLettersBatchAsync(
+        DateTimeOffset completedBefore,
+        int batchSize,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (sync)
+        {
+            var ids = jobs.Where(x => x.Value.Job.Status == JobStatus.DeadLettered &&
+                    x.Value.Job.CompletedAt < completedBefore.ToUniversalTime())
+                .OrderBy(x => x.Value.Job.CompletedAt)
+                .ThenBy(x => x.Key)
+                .Take(batchSize)
+                .Select(x => x.Key)
+                .ToArray();
+            foreach (var id in ids) jobs.Remove(id);
+            return ValueTask.FromResult(new DeadLetterMaintenanceResult(true, ids.Length));
+        }
+    }
+
     public ValueTask<bool> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -237,7 +258,8 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions 
         {
             if (!jobs.TryGetValue(lease.Job.Id, out var stored) ||
                 stored.Job.Status != JobStatus.Processing ||
-                stored.LeaseToken != lease.Token)
+                stored.LeaseToken != lease.Token ||
+                stored.LeaseExpiresAt <= timeProvider.GetUtcNow())
             {
                 return ValueTask.FromResult(false);
             }
