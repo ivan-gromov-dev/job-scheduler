@@ -2,8 +2,8 @@
 
 A lightweight, reliable job queue and scheduler for .NET.
 
-The in-memory worker now has deterministic failure handling. The current goal is
-durable storage and horizontally scalable workers. See
+The worker supports in-memory and durable PostgreSQL storage. The current goal is
+recurring scheduling. See
 [ROADMAP.md](ROADMAP.md) for scope and milestones.
 Completed work is recorded in [CHANGELOG.MD](CHANGELOG.MD).
 
@@ -11,6 +11,7 @@ Completed work is recorded in [CHANGELOG.MD](CHANGELOG.MD).
 
 - `src/JobScheduler.Core` — domain model and queue/scheduling abstractions.
 - `src/JobScheduler.Worker` — generic-host worker process.
+- `src/JobScheduler.PostgreSql` — durable multi-worker storage and migrations.
 - `tests/JobScheduler.Core.Tests` — fast unit tests for core behavior.
 
 ## Prerequisites
@@ -38,6 +39,11 @@ dotnet run --project tools/JobScheduler.Harness -- implement
 The cross-platform .NET harness verifies formatting, performs a Release build, runs all
 discovered unit and integration tests, enforces at least 70% line coverage, and audits
 NuGet packages.
+
+PostgreSQL integration tests use `JOB_SCHEDULER_POSTGRES_TEST_CONNECTION_STRING` and
+require a disposable database because the suite resets its scheduler tables.
+The PostgreSQL provider uses EF Core for schema migrations and ordinary CRUD, with
+focused Npgsql SQL for atomic `SKIP LOCKED` claims and lease-token transitions.
 
 ## Current guarantees
 

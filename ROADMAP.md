@@ -33,18 +33,18 @@ reliably within one process, with complete unit and integration coverage.
 
 Exit criterion: failed and abandoned jobs have deterministic, testable outcomes.
 
-## Milestone 3 — Durable PostgreSQL storage (current)
+## Milestone 3 — Durable PostgreSQL storage
 
-- [ ] Design versioned schema and migrations.
-- [ ] Implement atomic multi-worker claiming with leases.
-- [ ] Add optimistic concurrency and recovery of expired leases.
-- [ ] Add indexes and polling behavior for immediate and scheduled workloads.
-- [ ] Run crash, restart, contention, and migration integration tests.
+- [x] Design versioned schema and migrations.
+- [x] Implement atomic multi-worker claiming with leases.
+- [x] Add optimistic concurrency and recovery of expired leases.
+- [x] Add indexes and polling behavior for immediate and scheduled workloads.
+- [x] Run crash, restart, contention, and migration integration tests.
 
 Exit criterion: multiple worker processes can safely share a durable queue without
 losing accepted jobs.
 
-## Milestone 4 — Scheduling
+## Milestone 4 — Scheduling (current)
 
 - [ ] Add one-off scheduling and recurring schedules.
 - [ ] Define cron syntax, time-zone handling, and daylight-saving behavior.

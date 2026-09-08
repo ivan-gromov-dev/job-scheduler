@@ -134,21 +134,32 @@ internal static class Harness
                 $"Expected {expectedReports} coverage reports, found {reports.Length}.");
         }
 
-        var linesCovered = 0;
-        var linesValid = 0;
+        var lines = new Dictionary<(string File, int Number), bool>();
         foreach (var report in reports)
         {
             var coverage = XDocument.Load(report).Root
                 ?? throw new InvalidOperationException($"Coverage report is empty: {report}");
-            linesCovered += ParseAttribute(coverage, "lines-covered", report);
-            linesValid += ParseAttribute(coverage, "lines-valid", report);
+            foreach (var @class in coverage.Descendants("class"))
+            {
+                var file = @class.Attribute("filename")?.Value
+                    ?? throw new InvalidOperationException($"Coverage class has no filename: {report}");
+                foreach (var line in @class.Element("lines")?.Elements("line") ?? [])
+                {
+                    var number = ParseAttribute(line, "number", report);
+                    var covered = ParseAttribute(line, "hits", report) > 0;
+                    var key = (file, number);
+                    lines[key] = covered || lines.GetValueOrDefault(key);
+                }
+            }
         }
 
+        var linesValid = lines.Count;
         if (linesValid == 0)
         {
             throw new InvalidOperationException("Coverage reports contain no executable lines.");
         }
 
+        var linesCovered = lines.Count(line => line.Value);
         var percentage = 100d * linesCovered / linesValid;
         Console.WriteLine(
             string.Create(
