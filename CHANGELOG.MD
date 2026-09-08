@@ -7,6 +7,13 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ### Added
 
+- Durable one-off and recurring schedules with five-field cron expressions, explicit
+  time zones, deterministic daylight-saving behavior, and skip, coalesce, or bounded
+  catch-up misfire policies.
+- Schedule pause, resume, update, and delete operations plus a hosted materializer;
+  PostgreSQL row locking and occurrence deduplication prevent duplicate jobs across
+  scheduler instances.
+
 - Durable PostgreSQL storage with serialized versioned migrations, indexed polling,
   atomic multi-worker claims, lease recovery, and guarded lifecycle updates.
 - PostgreSQL integration coverage for migration and claim contention, crash recovery,

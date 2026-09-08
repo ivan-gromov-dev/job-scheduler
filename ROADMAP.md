@@ -44,17 +44,17 @@ Exit criterion: failed and abandoned jobs have deterministic, testable outcomes.
 Exit criterion: multiple worker processes can safely share a durable queue without
 losing accepted jobs.
 
-## Milestone 4 — Scheduling (current)
+## Milestone 4 — Scheduling
 
-- [ ] Add one-off scheduling and recurring schedules.
-- [ ] Define cron syntax, time-zone handling, and daylight-saving behavior.
-- [ ] Define misfire policy: skip, coalesce, or catch up.
-- [ ] Prevent duplicate materialization across scheduler instances.
-- [ ] Add pause, resume, update, and delete operations for schedules.
+- [x] Add one-off scheduling and recurring schedules.
+- [x] Define cron syntax, time-zone handling, and daylight-saving behavior.
+- [x] Define misfire policy: skip, coalesce, or catch up.
+- [x] Prevent duplicate materialization across scheduler instances.
+- [x] Add pause, resume, update, and delete operations for schedules.
 
 Exit criterion: recurring jobs behave predictably across restarts and clock changes.
 
-## Milestone 5 — Operations and observability
+## Milestone 5 — Operations and observability (current)
 
 - [ ] Add structured logs with job, attempt, queue, and correlation identifiers.
 - [ ] Add OpenTelemetry traces and metrics for latency, throughput, retries, and lag.

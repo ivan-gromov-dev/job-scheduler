@@ -1,5 +1,6 @@
 using JobScheduler.Core.Handlers;
 using JobScheduler.Core.Jobs;
+using JobScheduler.Core.Scheduling;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -22,6 +23,8 @@ public static class JobSchedulerServiceCollectionExtensions
             return registry;
         });
         services.TryAddSingleton<IJobClient, JobClient>();
+        services.TryAddSingleton<IScheduleStore, InMemoryScheduleStore>();
+        services.TryAddSingleton<IScheduleClient, ScheduleClient>();
         services.TryAddScoped<IJobDispatcher, JobDispatcher>();
         return services;
     }

@@ -1,4 +1,5 @@
 using JobScheduler.Core.Jobs;
+using JobScheduler.Core.Scheduling;
 using JobScheduler.PostgreSql;
 using Npgsql;
 using System.Globalization;
@@ -76,9 +77,39 @@ public sealed class PostgreSqlJobStoreIntegrationTests
         Assert.NotNull(await autoMigrating.EnqueueAsync("auto", "migration"));
     }
 
+    [Fact]
+    public async Task ConcurrentSchedulersMaterializeEachOccurrenceOnceAndPersistLifecycle()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("JOB_SCHEDULER_POSTGRES_TEST_CONNECTION_STRING")
+            ?? throw new InvalidOperationException("Set JOB_SCHEDULER_POSTGRES_TEST_CONNECTION_STRING to run PostgreSQL integration tests.");
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await ResetAsync(dataSource);
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero));
+        var migrator = new PostgreSqlMigrator(dataSource);
+        await migrator.MigrateAsync();
+        var options = new PostgreSqlJobStoreOptions { ConnectionString = connectionString, AutoMigrate = false };
+        var first = new PostgreSqlScheduleStore(dataSource, options, migrator, clock);
+        var second = new PostgreSqlScheduleStore(dataSource, options, migrator, clock);
+        using var jobs = new PostgreSqlJobStore(dataSource, options, migrator, clock);
+        var schedule = await first.CreateAsync("hourly", "{}", new ScheduleOptions { CronExpression = "1 * * * *", MisfirePolicy = MisfirePolicy.CatchUp });
+
+        var counts = await Task.WhenAll(first.MaterializeDueAsync(clock.GetUtcNow().AddHours(2).AddMinutes(1)).AsTask(), second.MaterializeDueAsync(clock.GetUtcNow().AddHours(2).AddMinutes(1)).AsTask());
+        Assert.Equal(3, counts.Sum());
+        Assert.True(await first.PauseAsync(schedule.Id));
+        Assert.True(await second.ResumeAsync(schedule.Id));
+        Assert.NotNull(await first.UpdateAsync(schedule.Id, new ScheduleOptions { RunAt = clock.GetUtcNow().AddDays(1) }));
+        Assert.True(await second.DeleteAsync(schedule.Id));
+        Assert.Null(await first.GetAsync(schedule.Id));
+
+        clock.Advance(TimeSpan.FromHours(3));
+        var claimed = new List<JobLease>();
+        while (await jobs.ClaimAsync(TimeSpan.FromMinutes(1)) is { } lease) { claimed.Add(lease); await jobs.CompleteAsync(lease); }
+        Assert.Equal(3, claimed.Count);
+    }
+
     private static async Task ResetAsync(NpgsqlDataSource dataSource)
     {
-        await using var command = dataSource.CreateCommand("DROP TABLE IF EXISTS job_scheduler_jobs; DROP TABLE IF EXISTS \"__EFMigrationsHistory\";");
+        await using var command = dataSource.CreateCommand("DROP TABLE IF EXISTS job_scheduler_schedules; DROP TABLE IF EXISTS job_scheduler_jobs; DROP TABLE IF EXISTS \"__EFMigrationsHistory\";");
         await command.ExecuteNonQueryAsync();
     }
 

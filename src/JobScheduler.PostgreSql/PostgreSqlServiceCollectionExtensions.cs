@@ -1,5 +1,6 @@
 using JobScheduler.Core.Jobs;
 using JobScheduler.PostgreSql;
+using JobScheduler.Core.Scheduling;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 
@@ -16,6 +17,8 @@ public static class PostgreSqlServiceCollectionExtensions
         services.AddSingleton(_ => NpgsqlDataSource.Create(options.ConnectionString));
         services.AddSingleton<PostgreSqlMigrator>(); services.AddSingleton<PostgreSqlJobStore>();
         services.AddSingleton<IJobStore>(provider => provider.GetRequiredService<PostgreSqlJobStore>());
+        services.AddSingleton<PostgreSqlScheduleStore>();
+        services.AddSingleton<IScheduleStore>(provider => provider.GetRequiredService<PostgreSqlScheduleStore>());
         return services;
     }
 }
