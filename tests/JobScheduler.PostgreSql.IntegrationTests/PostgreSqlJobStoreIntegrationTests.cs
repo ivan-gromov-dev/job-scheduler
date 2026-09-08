@@ -2,7 +2,6 @@ using JobScheduler.Core.Jobs;
 using JobScheduler.PostgreSql;
 using Npgsql;
 using System.Globalization;
-using Xunit.Sdk;
 
 namespace JobScheduler.PostgreSql.IntegrationTests;
 
@@ -11,11 +10,8 @@ public sealed class PostgreSqlJobStoreIntegrationTests
     [Fact]
     public async Task MigrationContentionCrashRecoveryAndRestartPreserveJobs()
     {
-        var connectionString = Environment.GetEnvironmentVariable("JOB_SCHEDULER_POSTGRES_TEST_CONNECTION_STRING");
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw SkipException.ForSkip("Set JOB_SCHEDULER_POSTGRES_TEST_CONNECTION_STRING to run PostgreSQL integration tests.");
-        }
+        var connectionString = Environment.GetEnvironmentVariable("JOB_SCHEDULER_POSTGRES_TEST_CONNECTION_STRING")
+            ?? throw new InvalidOperationException("Set JOB_SCHEDULER_POSTGRES_TEST_CONNECTION_STRING to run PostgreSQL integration tests.");
         await using var dataSource = NpgsqlDataSource.Create(connectionString);
         await ResetAsync(dataSource);
         var clock = new MutableTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));

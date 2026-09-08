@@ -12,6 +12,22 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      JOB_SCHEDULER_POSTGRES_TEST_CONNECTION_STRING: Host=localhost;Port=5432;Database=jobscheduler;Username=postgres;Password=jobscheduler
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: jobscheduler
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: jobscheduler
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jobscheduler"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Check out repository
