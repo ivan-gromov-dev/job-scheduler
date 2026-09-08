@@ -2,8 +2,8 @@
 
 A lightweight, reliable job queue and scheduler for .NET.
 
-The in-memory MVP is complete. The current goal is deterministic failure handling,
-followed by durable storage and horizontally scalable workers. See
+The in-memory worker now has deterministic failure handling. The current goal is
+durable storage and horizontally scalable workers. See
 [ROADMAP.md](ROADMAP.md) for scope and milestones.
 Completed work is recorded in [CHANGELOG.MD](CHANGELOG.MD).
 
@@ -43,10 +43,13 @@ NuGet packages.
 
 The in-process worker provides **at-least-once execution**. Claiming moves a due
 pending job to `Processing` and assigns a time-limited lease. Successful dispatch
-moves it to `Succeeded`; an exception moves it to `Failed`. A pending job may instead
-be moved to `Canceled`. If a process stops after claiming but before recording an
-outcome, the expired lease makes the job claimable again and increments its attempt.
-Handlers must therefore be idempotent.
+moves it to `Succeeded`. Transient failures and timeouts are retried with configurable
+exponential backoff and jitter; permanent failures, cancellations, and exhausted
+retries move to `DeadLettered`. Dead letters can be inspected, replayed, and purged
+according to retention rules. A pending job may instead be moved to `Canceled`.
+Long-running handlers renew their lease. If a process stops after claiming but before
+recording an outcome, the expired lease makes the job claimable again and increments
+its attempt. Handlers must therefore be idempotent.
 
 Delayed jobs remain `Pending` until their UTC `ScheduledAt` value is reached. The
 store and worker receive a `TimeProvider`, so clock-dependent behavior can be tested
@@ -63,4 +66,7 @@ builder.Services.AddJobWorker(options => options.MaxConcurrency = 4);
 ```
 
 Resolve `IJobClient` to call `EnqueueAsync` for immediate work or `ScheduleAsync` with
-a UTC `DateTimeOffset` for delayed work. The public API is not yet declared stable.
+a UTC `DateTimeOffset` for delayed work. Pass `JobEnqueueOptions.DeduplicationKey` to
+coalesce active or already successful work for the same job type and application key.
+Throw `JobExecutionException` with a permanent or cancellation classification when a
+failure must not be retried. The public API is not yet declared stable.

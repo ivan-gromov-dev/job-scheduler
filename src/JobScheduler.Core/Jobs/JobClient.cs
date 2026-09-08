@@ -18,6 +18,16 @@ internal sealed class JobClient(IJobStore store) : IJobClient
             cancellationToken);
     }
 
+    public ValueTask<Job> EnqueueAsync<TJob>(
+        TJob job,
+        JobEnqueueOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        ArgumentNullException.ThrowIfNull(options);
+        return store.EnqueueAsync(JobTypeName.For<TJob>(), JsonSerializer.Serialize(job), options, cancellationToken);
+    }
+
     public ValueTask<Job> ScheduleAsync<TJob>(
         TJob job,
         DateTimeOffset scheduledAt,

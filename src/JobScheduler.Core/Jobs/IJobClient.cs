@@ -7,6 +7,11 @@ public interface IJobClient
         DateTimeOffset? scheduledAt = null,
         CancellationToken cancellationToken = default);
 
+    ValueTask<Job> EnqueueAsync<TJob>(
+        TJob job,
+        JobEnqueueOptions options,
+        CancellationToken cancellationToken = default);
+
     ValueTask<Job> ScheduleAsync<TJob>(
         TJob job,
         DateTimeOffset scheduledAt,

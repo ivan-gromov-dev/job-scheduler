@@ -99,6 +99,81 @@ public sealed class InMemoryJobStoreTests
         Assert.Equal(20, claims.Select(lease => lease!.Job.Id).Distinct().Count());
     }
 
+    [Fact]
+    public async Task RetrySchedulesJobAndRecordsClassifiedFailure()
+    {
+        var time = new TestTimeProvider(Start);
+        var store = new InMemoryJobStore(time);
+        var job = await store.EnqueueAsync("test", "{}");
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+        var retryAt = Start.AddMinutes(2);
+
+        Assert.True(await store.RetryAsync(lease!, new JobFailure(JobFailureKind.Transient, "network"), retryAt));
+        var retried = await store.GetAsync(job.Id);
+        Assert.Equal(JobStatus.Pending, retried!.Status);
+        Assert.Equal(JobFailureKind.Transient, retried.FailureKind);
+        Assert.Equal(retryAt, retried.ScheduledAt);
+        Assert.Null(await store.ClaimAsync(TimeSpan.FromMinutes(1)));
+        time.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(2, (await store.ClaimAsync(TimeSpan.FromMinutes(1)))!.Job.Attempt);
+    }
+
+    [Fact]
+    public async Task LeaseRenewalPreventsEarlyReclaim()
+    {
+        var time = new TestTimeProvider(Start);
+        var store = new InMemoryJobStore(time);
+        await store.EnqueueAsync("test", "{}");
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+        time.Advance(TimeSpan.FromSeconds(30));
+
+        var renewed = await store.RenewLeaseAsync(lease!, TimeSpan.FromMinutes(1));
+        time.Advance(TimeSpan.FromSeconds(31));
+
+        Assert.NotNull(renewed);
+        Assert.Null(await store.ClaimAsync(TimeSpan.FromMinutes(1)));
+        time.Advance(TimeSpan.FromSeconds(29));
+        Assert.NotNull(await store.ClaimAsync(TimeSpan.FromMinutes(1)));
+    }
+
+    [Fact]
+    public async Task DeadLetterCanBeInspectedReplayedAndPurged()
+    {
+        var time = new TestTimeProvider(Start);
+        var store = new InMemoryJobStore(time);
+        var first = await store.EnqueueAsync("test", "one");
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+        await store.DeadLetterAsync(lease!, new JobFailure(JobFailureKind.Permanent, "invalid"));
+
+        var deadLetters = await store.GetDeadLettersAsync();
+        Assert.Equal(first.Id, Assert.Single(deadLetters).Id);
+        Assert.Equal(Start, deadLetters[0].CompletedAt);
+        Assert.True(await store.ReplayDeadLetterAsync(first.Id));
+        Assert.Equal(0, (await store.GetAsync(first.Id))!.Attempt);
+
+        var replayLease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+        await store.DeadLetterAsync(replayLease!, new JobFailure(JobFailureKind.Permanent, "invalid"));
+        time.Advance(TimeSpan.FromDays(2));
+        Assert.Equal(1, await store.PurgeDeadLettersAsync(Start.AddDays(1)));
+        Assert.Null(await store.GetAsync(first.Id));
+    }
+
+    [Fact]
+    public async Task DeduplicationReturnsActiveOrSucceededJobButAllowsReplacementAfterFailure()
+    {
+        var store = new InMemoryJobStore(new TestTimeProvider(Start));
+        var options = new JobEnqueueOptions { DeduplicationKey = "invoice-42" };
+        var first = await store.EnqueueAsync("test", "one", options);
+        var duplicate = await store.EnqueueAsync("test", "two", options);
+        Assert.Equal(first.Id, duplicate.Id);
+        Assert.Equal("one", duplicate.Payload);
+
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+        await store.FailAsync(lease!, "bad");
+        var replacement = await store.EnqueueAsync("test", "two", options);
+        Assert.NotEqual(first.Id, replacement.Id);
+    }
+
     private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
