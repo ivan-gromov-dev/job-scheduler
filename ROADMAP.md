@@ -23,17 +23,17 @@ The target baseline is **at-least-once execution** with idempotent handlers.
 Exit criterion: an application can enqueue immediate or delayed jobs and process them
 reliably within one process, with complete unit and integration coverage.
 
-## Milestone 2 — Failure handling (current)
+## Milestone 2 — Failure handling
 
-- [ ] Add configurable retry policies with exponential backoff and jitter.
-- [ ] Distinguish transient, permanent, timeout, and cancellation failures.
-- [ ] Add execution timeouts and lease renewal for long-running handlers.
-- [ ] Add dead-letter storage, inspection, replay, and retention rules.
-- [ ] Define idempotency and optional deduplication keys.
+- [x] Add configurable retry policies with exponential backoff and jitter.
+- [x] Distinguish transient, permanent, timeout, and cancellation failures.
+- [x] Add execution timeouts and lease renewal for long-running handlers.
+- [x] Add dead-letter storage, inspection, replay, and retention rules.
+- [x] Define idempotency and optional deduplication keys.
 
 Exit criterion: failed and abandoned jobs have deterministic, testable outcomes.
 
-## Milestone 3 — Durable PostgreSQL storage
+## Milestone 3 — Durable PostgreSQL storage (current)
 
 - [ ] Design versioned schema and migrations.
 - [ ] Implement atomic multi-worker claiming with leases.

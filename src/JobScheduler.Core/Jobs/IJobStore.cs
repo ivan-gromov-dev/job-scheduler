@@ -8,6 +8,12 @@ public interface IJobStore
         DateTimeOffset? scheduledAt = null,
         CancellationToken cancellationToken = default);
 
+    ValueTask<Job> EnqueueAsync(
+        string type,
+        string payload,
+        JobEnqueueOptions options,
+        CancellationToken cancellationToken = default);
+
     ValueTask<JobLease?> ClaimAsync(
         TimeSpan leaseDuration,
         CancellationToken cancellationToken = default);
@@ -18,6 +24,28 @@ public interface IJobStore
         JobLease lease,
         string failure,
         CancellationToken cancellationToken = default);
+
+    ValueTask<bool> RetryAsync(
+        JobLease lease,
+        JobFailure failure,
+        DateTimeOffset retryAt,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<bool> DeadLetterAsync(
+        JobLease lease,
+        JobFailure failure,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<JobLease?> RenewLeaseAsync(
+        JobLease lease,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<IReadOnlyList<Job>> GetDeadLettersAsync(CancellationToken cancellationToken = default);
+
+    ValueTask<bool> ReplayDeadLetterAsync(Guid jobId, CancellationToken cancellationToken = default);
+
+    ValueTask<int> PurgeDeadLettersAsync(DateTimeOffset completedBefore, CancellationToken cancellationToken = default);
 
     ValueTask<bool> CancelAsync(Guid jobId, CancellationToken cancellationToken = default);
 

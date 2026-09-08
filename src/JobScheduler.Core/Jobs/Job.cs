@@ -18,11 +18,18 @@ public sealed record Job
 
     public string? Failure { get; init; }
 
+    public JobFailureKind? FailureKind { get; init; }
+
+    public string? DeduplicationKey { get; init; }
+
+    public DateTimeOffset? CompletedAt { get; init; }
+
     public static Job Create(
         string type,
         string payload,
         DateTimeOffset now,
-        DateTimeOffset? scheduledAt = null)
+        DateTimeOffset? scheduledAt = null,
+        string? deduplicationKey = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(type);
         ArgumentNullException.ThrowIfNull(payload);
@@ -34,6 +41,7 @@ public sealed record Job
             Payload = payload,
             EnqueuedAt = now.ToUniversalTime(),
             ScheduledAt = (scheduledAt ?? now).ToUniversalTime(),
+            DeduplicationKey = deduplicationKey,
         };
     }
 }
