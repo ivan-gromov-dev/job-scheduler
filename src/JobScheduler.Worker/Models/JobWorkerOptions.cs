@@ -14,6 +14,14 @@ public sealed class JobWorkerOptions
 
     public TimeSpan DeadLetterRetention { get; set; } = TimeSpan.FromDays(30);
 
+    public TimeSpan MaintenanceInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+    public int MaintenanceBatchSize { get; set; } = 100;
+
+    public TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    public bool CancelHandlersAfterDrainTimeout { get; set; } = true;
+
     public RetryPolicy Retry { get; } = new();
 
     public Dictionary<string, int> QueueConcurrency { get; } = new(StringComparer.Ordinal);

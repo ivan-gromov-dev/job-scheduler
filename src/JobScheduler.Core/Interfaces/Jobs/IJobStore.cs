@@ -52,6 +52,17 @@ public interface IJobStore
 
     ValueTask<int> PurgeDeadLettersAsync(DateTimeOffset completedBefore, CancellationToken cancellationToken = default);
 
+    async ValueTask<DeadLetterMaintenanceResult> PurgeDeadLettersBatchAsync(
+        DateTimeOffset completedBefore,
+        int batchSize,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        return new DeadLetterMaintenanceResult(
+            true,
+            await PurgeDeadLettersAsync(completedBefore, cancellationToken));
+    }
+
     ValueTask<bool> CancelAsync(Guid jobId, CancellationToken cancellationToken = default);
 
     ValueTask<Job?> GetAsync(Guid jobId, CancellationToken cancellationToken = default);

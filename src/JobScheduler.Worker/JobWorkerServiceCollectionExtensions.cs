@@ -17,6 +17,7 @@ public static class JobWorkerServiceCollectionExtensions
         }
 
         services.AddHostedService<JobWorker>();
+        services.AddHostedService<DeadLetterMaintenanceService>();
         services.TryAddSingleton<JobWorkerState>();
         services.AddHealthChecks().AddCheck<JobWorkerHealthCheck>("job_scheduler_worker", tags: ["ready"]);
         return services;
@@ -28,6 +29,7 @@ public static class JobWorkerServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddJobScheduler();
+        services.TryAddSingleton<JobWorkerState>();
         if (configure is not null) services.Configure(configure);
         services.AddHostedService<ScheduleMaterializer>();
         return services;

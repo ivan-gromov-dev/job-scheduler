@@ -64,7 +64,54 @@ Exit criterion: recurring jobs behave predictably across restarts and clock chan
 
 Exit criterion: operators can diagnose behavior and safely control a running system.
 
-## Milestone 6 — Packaging and release (current)
+## Milestone 6 — Execution correctness
+
+- [x] Treat lost leases as an explicit execution outcome and do not report stale
+      complete, retry, or dead-letter transitions as successful.
+- [x] Cancel local execution when lease renewal fails and prevent further lifecycle
+      transitions from the former owner.
+- [x] Define timeout behavior for handlers that do not cooperate with cancellation and
+      prevent a retry from overlapping the timed-out invocation within the same process.
+- [x] Make draining configurable and coordinate worker shutdown with schedule
+      materialization and active handler completion.
+- [x] Move dead-letter retention out of claim loops into a periodic, single-owner,
+      batched maintenance service.
+
+Exit criterion: every invocation has an authoritative lease-aware outcome, and
+timeouts, maintenance, and shutdown cannot silently create conflicting execution.
+
+## Milestone 7 — Durable job and schedule contracts
+
+- [ ] Add stable explicit job type names independent of CLR namespaces and type
+      renames.
+- [ ] Version serialized payloads and support aliases or upcasters for jobs persisted
+      by older application versions.
+- [ ] Make serializer behavior configurable without coupling core contracts to a
+      storage provider.
+- [ ] Carry queue, priority, deduplication, and correlation options through one-off and
+      recurring schedules.
+- [ ] Record worker identity and durable attempt history, including claim, renewal,
+      duration, outcome, failure, and retry timing.
+
+Exit criterion: persisted jobs and schedules remain executable and diagnosable across
+application upgrades and worker instances.
+
+## Milestone 8 — Operational control
+
+- [ ] Add cursor-based job and schedule listing with filters for time, type, status,
+      queue, and correlation identifier.
+- [ ] Add bulk cancellation and replay plus manual triggering of schedules and
+      inspection of their next occurrence and materialization history.
+- [ ] Add storage and schema readiness checks, schedule-materializer health, and
+      propagation of fatal background-service failures.
+- [ ] Support an explicit schema-validation mode that refuses to start against a
+      missing or incompatible database without applying migrations.
+- [ ] Expose administrative draining and report drain progress and active work.
+
+Exit criterion: operators can determine whether the complete scheduler is ready,
+inspect durable work, and control it without direct database access.
+
+## Milestone 9 — Packaging and release
 
 - [ ] Stabilize and document the public API.
 - [ ] Add compatibility, performance, and soak-test suites.

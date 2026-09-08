@@ -125,6 +125,72 @@ public sealed class WorkerIntegrationTests
     }
 
     [Fact]
+    public async Task TimeoutWaitsForNonCooperativeInvocationBeforeRetrying()
+    {
+        var state = new NonCooperativeTimeoutState();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(state);
+        services.AddJobHandler<NonCooperativeTimeoutJob, NonCooperativeTimeoutHandler>();
+        services.AddJobWorker(options =>
+        {
+            options.MaxConcurrency = 1;
+            options.PollInterval = TimeSpan.FromMilliseconds(5);
+            options.ExecutionTimeout = TimeSpan.FromMilliseconds(30);
+            options.LeaseDuration = TimeSpan.FromSeconds(2);
+            options.LeaseRenewalInterval = TimeSpan.FromMilliseconds(20);
+            options.Retry.InitialDelay = TimeSpan.Zero;
+            options.Retry.MaxDelay = TimeSpan.Zero;
+            options.Retry.JitterFactor = 0;
+        });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().OfType<JobWorker>().Single();
+        var store = provider.GetRequiredService<IJobStore>();
+        var job = await provider.GetRequiredService<IJobClient>().EnqueueAsync(new NonCooperativeTimeoutJob());
+
+        await worker.StartAsync(CancellationToken.None);
+        await state.TimedOut.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(80);
+        Assert.Equal(1, state.Starts);
+        Assert.Equal(JobStatus.Processing, (await store.GetAsync(job.Id))!.Status);
+
+        state.Release.TrySetResult();
+        await state.Succeeded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForStatusAsync(store, job.Id, JobStatus.Succeeded);
+        await worker.StopAsync(CancellationToken.None);
+        Assert.Equal(2, state.Starts);
+    }
+
+    [Fact]
+    public async Task LostLeaseCancelsHandlerAndLeavesLifecycleToNewOwner()
+    {
+        var state = new LostLeaseState();
+        var store = new LeaseRejectingStore(new InMemoryJobStore(TimeProvider.System));
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IJobStore>(store);
+        services.AddSingleton(state);
+        services.AddJobHandler<LostLeaseJob, LostLeaseHandler>();
+        services.AddJobWorker(options =>
+        {
+            options.MaxConcurrency = 1;
+            options.PollInterval = TimeSpan.FromMilliseconds(5);
+            options.LeaseDuration = TimeSpan.FromSeconds(1);
+            options.LeaseRenewalInterval = TimeSpan.FromMilliseconds(20);
+        });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().OfType<JobWorker>().Single();
+        var job = await provider.GetRequiredService<IJobClient>().EnqueueAsync(new LostLeaseJob());
+
+        await worker.StartAsync(CancellationToken.None);
+        await state.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(JobStatus.Processing, (await store.GetAsync(job.Id))!.Status);
+        Assert.Equal(0, store.LifecycleWrites);
+    }
+
+    [Fact]
     public async Task ReadinessTurnsUnhealthyWhileWorkerGracefullyDrainsActiveJob()
     {
         var state = new DrainState();
@@ -154,6 +220,34 @@ public sealed class WorkerIntegrationTests
         await stop.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task DrainTimeoutCancelsActiveHandler()
+    {
+        var state = new LostLeaseState();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(state);
+        services.AddJobHandler<LostLeaseJob, LostLeaseHandler>();
+        services.AddJobWorker(options =>
+        {
+            options.MaxConcurrency = 1;
+            options.PollInterval = TimeSpan.FromMilliseconds(5);
+            options.DrainTimeout = TimeSpan.FromMilliseconds(30);
+        });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().OfType<JobWorker>().Single();
+        var store = provider.GetRequiredService<IJobStore>();
+        var job = await provider.GetRequiredService<IJobClient>().EnqueueAsync(new LostLeaseJob());
+
+        await worker.StartAsync(CancellationToken.None);
+        await WaitForStatusAsync(store, job.Id, JobStatus.Processing);
+        await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        await state.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(JobStatus.DeadLettered, (await store.GetAsync(job.Id))!.Status);
+        Assert.Equal(JobFailureKind.Cancellation, (await store.GetAsync(job.Id))!.FailureKind);
+    }
+
     private static async Task WaitForStatusAsync(IJobStore store, Guid id, JobStatus status)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -172,6 +266,10 @@ public sealed class WorkerIntegrationTests
     public sealed record TimeoutJob;
 
     public sealed record DrainJob;
+
+    public sealed record NonCooperativeTimeoutJob;
+
+    public sealed record LostLeaseJob;
 
     public sealed class RetryHandler(RetryState state) : IJobHandler<RetryJob>
     {
@@ -214,6 +312,32 @@ public sealed class WorkerIntegrationTests
         }
     }
 
+    public sealed class NonCooperativeTimeoutHandler(NonCooperativeTimeoutState state) : IJobHandler<NonCooperativeTimeoutJob>
+    {
+        public async Task HandleAsync(NonCooperativeTimeoutJob job, CancellationToken cancellationToken)
+        {
+            var attempt = state.IncrementStarts();
+            if (attempt == 1)
+            {
+                await Task.Delay(50, CancellationToken.None);
+                state.TimedOut.TrySetResult();
+                await state.Release.Task;
+                return;
+            }
+
+            state.Succeeded.TrySetResult();
+        }
+    }
+
+    public sealed class LostLeaseHandler(LostLeaseState state) : IJobHandler<LostLeaseJob>
+    {
+        public async Task HandleAsync(LostLeaseJob job, CancellationToken cancellationToken)
+        {
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+            catch (OperationCanceledException) { state.Canceled.TrySetResult(); throw; }
+        }
+    }
+
     public sealed class RetryState
     {
         private int attempts;
@@ -233,6 +357,42 @@ public sealed class WorkerIntegrationTests
     {
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    public sealed class NonCooperativeTimeoutState
+    {
+        private int starts;
+        public int Starts => Volatile.Read(ref starts);
+        public TaskCompletionSource TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Succeeded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int IncrementStarts() => Interlocked.Increment(ref starts);
+    }
+
+    public sealed class LostLeaseState
+    {
+        public TaskCompletionSource Canceled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed class LeaseRejectingStore(IJobStore inner) : IJobStore
+    {
+        public int LifecycleWrites { get; private set; }
+        public ValueTask<Job> EnqueueAsync(string type, string payload, DateTimeOffset? scheduledAt = null, CancellationToken cancellationToken = default) => inner.EnqueueAsync(type, payload, scheduledAt, cancellationToken);
+        public ValueTask<Job> EnqueueAsync(string type, string payload, JobEnqueueOptions options, CancellationToken cancellationToken = default) => inner.EnqueueAsync(type, payload, options, cancellationToken);
+        public ValueTask<JobLease?> ClaimAsync(TimeSpan leaseDuration, CancellationToken cancellationToken = default) => inner.ClaimAsync(leaseDuration, cancellationToken);
+        public ValueTask<JobLease?> ClaimAsync(TimeSpan leaseDuration, IReadOnlyCollection<string> queues, CancellationToken cancellationToken = default) => inner.ClaimAsync(leaseDuration, queues, cancellationToken);
+        public ValueTask<bool> CompleteAsync(JobLease lease, CancellationToken cancellationToken = default) { LifecycleWrites++; return inner.CompleteAsync(lease, cancellationToken); }
+        public ValueTask<bool> FailAsync(JobLease lease, string failure, CancellationToken cancellationToken = default) { LifecycleWrites++; return inner.FailAsync(lease, failure, cancellationToken); }
+        public ValueTask<bool> RetryAsync(JobLease lease, JobFailure failure, DateTimeOffset retryAt, CancellationToken cancellationToken = default) { LifecycleWrites++; return inner.RetryAsync(lease, failure, retryAt, cancellationToken); }
+        public ValueTask<bool> DeadLetterAsync(JobLease lease, JobFailure failure, CancellationToken cancellationToken = default) { LifecycleWrites++; return inner.DeadLetterAsync(lease, failure, cancellationToken); }
+        public ValueTask<JobLease?> RenewLeaseAsync(JobLease lease, TimeSpan leaseDuration, CancellationToken cancellationToken = default) => ValueTask.FromResult<JobLease?>(null);
+        public ValueTask<IReadOnlyList<Job>> GetDeadLettersAsync(CancellationToken cancellationToken = default) => inner.GetDeadLettersAsync(cancellationToken);
+        public ValueTask<bool> ReplayDeadLetterAsync(Guid jobId, CancellationToken cancellationToken = default) => inner.ReplayDeadLetterAsync(jobId, cancellationToken);
+        public ValueTask<int> PurgeDeadLettersAsync(DateTimeOffset completedBefore, CancellationToken cancellationToken = default) => inner.PurgeDeadLettersAsync(completedBefore, cancellationToken);
+        public ValueTask<DeadLetterMaintenanceResult> PurgeDeadLettersBatchAsync(DateTimeOffset completedBefore, int batchSize, CancellationToken cancellationToken = default) => inner.PurgeDeadLettersBatchAsync(completedBefore, batchSize, cancellationToken);
+        public ValueTask<bool> CancelAsync(Guid jobId, CancellationToken cancellationToken = default) => inner.CancelAsync(jobId, cancellationToken);
+        public ValueTask<Job?> GetAsync(Guid jobId, CancellationToken cancellationToken = default) => inner.GetAsync(jobId, cancellationToken);
+        public ValueTask<IReadOnlyList<Job>> ListAsync(JobQuery query, CancellationToken cancellationToken = default) => inner.ListAsync(query, cancellationToken);
     }
 
     public sealed class TestJobHandler(ProcessingState state) : IJobHandler<TestJob>

@@ -13,6 +13,8 @@ public sealed class JobWorker(
     ILogger<JobWorker> logger,
     JobWorkerState state) : BackgroundService
 {
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, CancellationTokenSource> activeExecutions = new();
+
     private static readonly Action<ILogger, Guid, Exception?> LogJobFailed =
         LoggerMessage.Define<Guid>(
             LogLevel.Error,
@@ -29,10 +31,27 @@ public sealed class JobWorker(
 
     private readonly JobWorkerOptions settings = Validate(options.Value);
 
-    public override Task StopAsync(CancellationToken cancellationToken)
+    private static readonly Action<ILogger, Guid, Exception?> LogLeaseLost =
+        LoggerMessage.Define<Guid>(LogLevel.Warning, new EventId(4, nameof(LogLeaseLost)),
+            "Lease ownership was lost for job {JobId}; no lifecycle transition was written");
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
     {
         state.BeginDrain();
-        return base.StopAsync(cancellationToken);
+        var stopping = base.StopAsync(cancellationToken);
+        if (!settings.CancelHandlersAfterDrainTimeout)
+        {
+            await stopping;
+            return;
+        }
+
+        var timeout = Task.Delay(settings.DrainTimeout, timeProvider, cancellationToken);
+        if (await Task.WhenAny(stopping, timeout) == timeout)
+        {
+            foreach (var execution in activeExecutions.Values) execution.Cancel();
+        }
+
+        await stopping;
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
@@ -57,7 +76,6 @@ public sealed class JobWorker(
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await store.PurgeDeadLettersAsync(timeProvider.GetUtcNow().Subtract(settings.DeadLetterRetention), stoppingToken);
                 var lease = queue is null
                     ? await store.ClaimAsync(settings.LeaseDuration, stoppingToken)
                     : await store.ClaimAsync(settings.LeaseDuration, [queue], stoppingToken);
@@ -92,28 +110,58 @@ public sealed class JobWorker(
         LogJobStarted(logger, lease.Job.Id, lease.Job.Attempt, lease.Job.Queue, lease.Job.CorrelationId, null);
         var started = timeProvider.GetTimestamp();
         using var execution = new CancellationTokenSource();
+        activeExecutions.TryAdd(lease.Job.Id, execution);
         using var timeoutCancellation = new CancellationTokenSource();
         var timeoutTask = Task.Delay(settings.ExecutionTimeout, timeProvider, timeoutCancellation.Token);
-        var renewalTask = RenewLeaseAsync(lease, execution.Token);
+        var leaseLost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalTask = RenewLeaseAsync(lease, leaseLost, execution.Token);
         try
         {
             await using var scope = scopeFactory.CreateAsyncScope();
             var dispatcher = scope.ServiceProvider.GetRequiredService<IJobDispatcher>();
             var dispatchTask = dispatcher.DispatchAsync(lease.Job, execution.Token);
-            if (await Task.WhenAny(dispatchTask, timeoutTask) == timeoutTask)
+            var outcome = await Task.WhenAny(dispatchTask, timeoutTask, leaseLost.Task);
+            if (outcome == leaseLost.Task)
             {
                 execution.Cancel();
+                await ObserveAsync(dispatchTask);
+                LogLeaseLost(logger, lease.Job.Id, null);
+                return;
+            }
+
+            if (outcome == timeoutTask)
+            {
+                execution.Cancel();
+                await ObserveAsync(dispatchTask);
+                if (leaseLost.Task.IsCompleted)
+                {
+                    LogLeaseLost(logger, lease.Job.Id, null);
+                    return;
+                }
+
                 await HandleFailureAsync(lease, new JobFailure(JobFailureKind.Timeout, $"Execution exceeded {settings.ExecutionTimeout}."));
                 return;
             }
 
             await dispatchTask;
-            await store.CompleteAsync(lease, CancellationToken.None);
-            JobSchedulerTelemetry.Completed.Add(1, tags);
-            LogJobCompleted(logger, lease.Job.Id, timeProvider.GetElapsedTime(started).TotalMilliseconds, null);
+            if (await store.CompleteAsync(lease, CancellationToken.None))
+            {
+                JobSchedulerTelemetry.Completed.Add(1, tags);
+                LogJobCompleted(logger, lease.Job.Id, timeProvider.GetElapsedTime(started).TotalMilliseconds, null);
+            }
+            else
+            {
+                LogLeaseLost(logger, lease.Job.Id, null);
+            }
         }
         catch (Exception exception)
         {
+            if (leaseLost.Task.IsCompleted)
+            {
+                LogLeaseLost(logger, lease.Job.Id, exception);
+                return;
+            }
+
             activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
             LogJobFailed(logger, lease.Job.Id, exception);
             var kind = exception is JobExecutionException classified ? classified.Kind :
@@ -126,6 +174,7 @@ public sealed class JobWorker(
             timeoutCancellation.Cancel();
             execution.Cancel();
             try { await renewalTask; } catch (OperationCanceledException) { }
+            activeExecutions.TryRemove(lease.Job.Id, out _);
             state.JobStopped();
         }
     }
@@ -136,25 +185,42 @@ public sealed class JobWorker(
         if (retryable && lease.Job.Attempt < settings.Retry.MaxAttempts)
         {
             var retryAt = timeProvider.GetUtcNow().Add(settings.Retry.GetDelay(lease.Job.Id, lease.Job.Attempt));
-            await store.RetryAsync(lease, failure, retryAt, CancellationToken.None);
-            JobSchedulerTelemetry.Retried.Add(1, new TagList { { "job.queue", lease.Job.Queue }, { "failure.kind", failure.Kind.ToString() } });
+            if (await store.RetryAsync(lease, failure, retryAt, CancellationToken.None))
+                JobSchedulerTelemetry.Retried.Add(1, new TagList { { "job.queue", lease.Job.Queue }, { "failure.kind", failure.Kind.ToString() } });
+            else LogLeaseLost(logger, lease.Job.Id, null);
         }
         else
         {
-            await store.DeadLetterAsync(lease, failure, CancellationToken.None);
-            JobSchedulerTelemetry.DeadLettered.Add(1, new TagList { { "job.queue", lease.Job.Queue }, { "failure.kind", failure.Kind.ToString() } });
+            if (await store.DeadLetterAsync(lease, failure, CancellationToken.None))
+                JobSchedulerTelemetry.DeadLettered.Add(1, new TagList { { "job.queue", lease.Job.Queue }, { "failure.kind", failure.Kind.ToString() } });
+            else LogLeaseLost(logger, lease.Job.Id, null);
         }
     }
 
-    private async Task RenewLeaseAsync(JobLease lease, CancellationToken cancellationToken)
+    private async Task RenewLeaseAsync(JobLease lease, TaskCompletionSource leaseLost, CancellationToken cancellationToken)
     {
         var current = lease;
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            await Task.Delay(settings.LeaseRenewalInterval, timeProvider, cancellationToken);
-            current = await store.RenewLeaseAsync(current, settings.LeaseDuration, cancellationToken);
-            if (current is null) return;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(settings.LeaseRenewalInterval, timeProvider, cancellationToken);
+                current = await store.RenewLeaseAsync(current, settings.LeaseDuration, cancellationToken);
+                if (current is null)
+                {
+                    leaseLost.TrySetResult();
+                    return;
+                }
+            }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception) { leaseLost.TrySetException(exception); }
+    }
+
+    private static async Task ObserveAsync(Task task)
+    {
+        try { await task; }
+        catch (Exception) { }
     }
 
     private static JobWorkerOptions Validate(JobWorkerOptions value)
@@ -166,6 +232,9 @@ public sealed class JobWorker(
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(value.LeaseRenewalInterval, value.LeaseDuration);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value.ExecutionTimeout, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value.DeadLetterRetention, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value.MaintenanceInterval, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThan(value.MaintenanceBatchSize, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value.DrainTimeout, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThan(value.Retry.MaxAttempts, 1);
         foreach (var queue in value.QueueConcurrency)
         {
