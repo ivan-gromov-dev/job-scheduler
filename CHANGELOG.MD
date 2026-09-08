@@ -5,6 +5,13 @@ remains in [ROADMAP.md](ROADMAP.md) until it is completed.
 
 ## Unreleased
 
+## [1.0.1] - 2026-09-08
+
+### Fixed
+
+- Release publishing now provisions PostgreSQL for the mandatory integration suite
+  before packing and publishing NuGet artifacts.
+
 ## [1.0.0] - 2026-09-08
 
 ### Added
