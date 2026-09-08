@@ -14,6 +14,9 @@ internal sealed class JobEntity
     public string? Failure { get; set; }
     public JobFailureKind? FailureKind { get; set; }
     public string? DeduplicationKey { get; set; }
+    public required string Queue { get; set; }
+    public int Priority { get; set; }
+    public string? CorrelationId { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public Guid? LeaseToken { get; set; }
     public DateTimeOffset? LeaseExpiresAt { get; set; }
@@ -31,6 +34,9 @@ internal sealed class JobEntity
         Failure = Failure,
         FailureKind = FailureKind,
         DeduplicationKey = DeduplicationKey,
+        Queue = Queue,
+        Priority = Priority,
+        CorrelationId = CorrelationId,
         CompletedAt = CompletedAt,
     };
 
@@ -46,6 +52,9 @@ internal sealed class JobEntity
         Failure = job.Failure,
         FailureKind = job.FailureKind,
         DeduplicationKey = job.DeduplicationKey,
+        Queue = job.Queue,
+        Priority = job.Priority,
+        CorrelationId = job.CorrelationId,
         CompletedAt = job.CompletedAt,
     };
 }

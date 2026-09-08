@@ -1,9 +1,11 @@
 namespace JobScheduler.Core.Jobs;
 
-public sealed class InMemoryJobStore(TimeProvider timeProvider) : IJobStore
+public sealed class InMemoryJobStore(TimeProvider timeProvider, JobQueueOptions queueOptions) : IJobStore
 {
     private readonly Lock sync = new();
     private readonly Dictionary<Guid, StoredJob> jobs = [];
+
+    public InMemoryJobStore(TimeProvider timeProvider) : this(timeProvider, new JobQueueOptions()) { }
 
     public ValueTask<Job> EnqueueAsync(
         string type,
@@ -35,7 +37,21 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider) : IJobStore
                 }
             }
 
-            var job = Job.Create(type, payload, now, options.ScheduledAt, key);
+            ArgumentException.ThrowIfNullOrWhiteSpace(options.Queue);
+            var capacity = options.MaxQueueDepth ?? queueOptions.GetCapacity(options.Queue);
+            if (capacity is <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(options), "Queue capacity must be positive.");
+            }
+
+            if (capacity is { } maximum && jobs.Values.Count(candidate =>
+                    candidate.Job.Queue == options.Queue &&
+                    candidate.Job.Status is JobStatus.Pending or JobStatus.Processing) >= maximum)
+            {
+                throw new QueueFullException(options.Queue, maximum);
+            }
+
+            var job = Job.Create(type, payload, now, options.ScheduledAt, key, options.Queue, options.Priority, options.CorrelationId);
             jobs.Add(job.Id, new StoredJob(job));
             return ValueTask.FromResult(job);
         }
@@ -43,8 +59,15 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider) : IJobStore
 
     public ValueTask<JobLease?> ClaimAsync(
         TimeSpan leaseDuration,
+        CancellationToken cancellationToken = default) =>
+        ClaimAsync(leaseDuration, Array.Empty<string>(), cancellationToken);
+
+    public ValueTask<JobLease?> ClaimAsync(
+        TimeSpan leaseDuration,
+        IReadOnlyCollection<string> queues,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(queues);
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(leaseDuration, TimeSpan.Zero);
         var now = timeProvider.GetUtcNow();
@@ -52,8 +75,10 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider) : IJobStore
         lock (sync)
         {
             var stored = jobs.Values
-                .Where(candidate => IsClaimable(candidate, now))
-                .OrderBy(candidate => candidate.Job.ScheduledAt)
+                .Where(candidate => IsClaimable(candidate, now) &&
+                    (queues.Count == 0 || queues.Contains(candidate.Job.Queue, StringComparer.Ordinal)))
+                .OrderByDescending(candidate => candidate.Job.Priority)
+                .ThenBy(candidate => candidate.Job.ScheduledAt)
                 .ThenBy(candidate => candidate.Job.EnqueuedAt)
                 .FirstOrDefault();
             if (stored is null)
@@ -178,6 +203,24 @@ public sealed class InMemoryJobStore(TimeProvider timeProvider) : IJobStore
         lock (sync)
         {
             return ValueTask.FromResult(jobs.TryGetValue(jobId, out var stored) ? stored.Job : null);
+        }
+    }
+
+    public ValueTask<IReadOnlyList<Job>> ListAsync(JobQuery query, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentOutOfRangeException.ThrowIfLessThan(query.Limit, 1);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (sync)
+        {
+            var result = jobs.Values.Select(candidate => candidate.Job)
+                .Where(job => query.Queue is null || job.Queue == query.Queue)
+                .Where(job => query.Status is null || job.Status == query.Status)
+                .OrderByDescending(job => job.EnqueuedAt)
+                .ThenBy(job => job.Id)
+                .Take(query.Limit)
+                .ToArray();
+            return ValueTask.FromResult<IReadOnlyList<Job>>(result);
         }
     }
 

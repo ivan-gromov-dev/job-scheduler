@@ -26,9 +26,11 @@ public sealed class JobSchedulerDbContext(NpgsqlDataSource dataSource) : DbConte
         job.Property(x => x.Attempt).HasColumnName("attempt"); job.Property(x => x.Failure).HasColumnName("failure");
         job.Property(x => x.FailureKind).HasColumnName("failure_kind").HasConversion<short?>();
         job.Property(x => x.DeduplicationKey).HasColumnName("deduplication_key"); job.Property(x => x.CompletedAt).HasColumnName("completed_at");
+        job.Property(x => x.Queue).HasColumnName("queue"); job.Property(x => x.Priority).HasColumnName("priority");
+        job.Property(x => x.CorrelationId).HasColumnName("correlation_id");
         job.Property(x => x.LeaseToken).HasColumnName("lease_token"); job.Property(x => x.LeaseExpiresAt).HasColumnName("lease_expires_at");
         job.Property(x => x.RowVersion).HasColumnName("row_version").IsConcurrencyToken();
-        job.HasIndex(x => new { x.ScheduledAt, x.EnqueuedAt, x.Id }, "ix_job_scheduler_jobs_poll").HasFilter("status = 0");
+        job.HasIndex(x => new { x.Queue, x.Priority, x.ScheduledAt, x.EnqueuedAt, x.Id }, "ix_job_scheduler_jobs_poll").IsDescending(false, true, false, false, false).HasFilter("status = 0");
         job.HasIndex(x => new { x.LeaseExpiresAt, x.Id }, "ix_job_scheduler_jobs_expired_leases").HasFilter("status = 1");
         job.HasIndex(x => new { x.CompletedAt, x.Id }, "ix_job_scheduler_jobs_dead_letters").HasFilter("status = 5");
         job.HasIndex(x => new { x.Type, x.DeduplicationKey }, "ux_job_scheduler_jobs_deduplication").IsUnique()

@@ -15,4 +15,6 @@ public sealed class JobWorkerOptions
     public TimeSpan DeadLetterRetention { get; set; } = TimeSpan.FromDays(30);
 
     public RetryPolicy Retry { get; } = new();
+
+    public Dictionary<string, int> QueueConcurrency { get; } = new(StringComparer.Ordinal);
 }

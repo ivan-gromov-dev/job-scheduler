@@ -3,6 +3,7 @@ using JobScheduler.Core.Jobs;
 using JobScheduler.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace JobScheduler.IntegrationTests;
 
@@ -22,7 +23,7 @@ public sealed class WorkerIntegrationTests
             options.PollInterval = TimeSpan.FromMilliseconds(10);
         });
         await using var provider = services.BuildServiceProvider();
-        var hostedService = provider.GetRequiredService<IEnumerable<IHostedService>>().Single();
+        var hostedService = provider.GetRequiredService<IEnumerable<IHostedService>>().OfType<JobWorker>().Single();
         var client = provider.GetRequiredService<IJobClient>();
         var store = provider.GetRequiredService<IJobStore>();
         var immediate = await client.EnqueueAsync(new TestJob("first"));
@@ -57,7 +58,7 @@ public sealed class WorkerIntegrationTests
             options.Retry.JitterFactor = 0;
         });
         await using var provider = services.BuildServiceProvider();
-        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().Single();
+        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().OfType<JobWorker>().Single();
         var store = provider.GetRequiredService<IJobStore>();
         var job = await provider.GetRequiredService<IJobClient>().EnqueueAsync(new RetryJob());
 
@@ -82,7 +83,7 @@ public sealed class WorkerIntegrationTests
             options.PollInterval = TimeSpan.FromMilliseconds(5);
         });
         await using var provider = services.BuildServiceProvider();
-        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().Single();
+        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().OfType<JobWorker>().Single();
         var store = provider.GetRequiredService<IJobStore>();
         var job = await provider.GetRequiredService<IJobClient>().EnqueueAsync(new PermanentJob());
 
@@ -111,7 +112,7 @@ public sealed class WorkerIntegrationTests
             options.Retry.MaxAttempts = 1;
         });
         await using var provider = services.BuildServiceProvider();
-        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().Single();
+        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().OfType<JobWorker>().Single();
         var store = provider.GetRequiredService<IJobStore>();
         var job = await provider.GetRequiredService<IJobClient>().EnqueueAsync(new TimeoutJob());
 
@@ -121,6 +122,36 @@ public sealed class WorkerIntegrationTests
         await worker.StopAsync(CancellationToken.None);
 
         Assert.Equal(JobFailureKind.Timeout, (await store.GetAsync(job.Id))!.FailureKind);
+    }
+
+    [Fact]
+    public async Task ReadinessTurnsUnhealthyWhileWorkerGracefullyDrainsActiveJob()
+    {
+        var state = new DrainState();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(state);
+        services.AddJobHandler<DrainJob, DrainHandler>();
+        services.AddJobWorker(options =>
+        {
+            options.MaxConcurrency = 1;
+            options.PollInterval = TimeSpan.FromMilliseconds(5);
+        });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetRequiredService<IEnumerable<IHostedService>>().OfType<JobWorker>().Single();
+        var health = provider.GetRequiredService<HealthCheckService>();
+        await provider.GetRequiredService<IJobClient>().EnqueueAsync(new DrainJob());
+
+        await worker.StartAsync(CancellationToken.None);
+        await state.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(HealthStatus.Healthy, (await health.CheckHealthAsync()).Status);
+
+        var stop = worker.StopAsync(CancellationToken.None);
+        await Task.Delay(20);
+        Assert.False(stop.IsCompleted);
+        Assert.Equal(HealthStatus.Unhealthy, (await health.CheckHealthAsync()).Status);
+        state.Release.TrySetResult();
+        await stop.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private static async Task WaitForStatusAsync(IJobStore store, Guid id, JobStatus status)
@@ -139,6 +170,8 @@ public sealed class WorkerIntegrationTests
     public sealed record PermanentJob;
 
     public sealed record TimeoutJob;
+
+    public sealed record DrainJob;
 
     public sealed class RetryHandler(RetryState state) : IJobHandler<RetryJob>
     {
@@ -172,6 +205,15 @@ public sealed class WorkerIntegrationTests
         }
     }
 
+    public sealed class DrainHandler(DrainState state) : IJobHandler<DrainJob>
+    {
+        public async Task HandleAsync(DrainJob job, CancellationToken cancellationToken)
+        {
+            state.Started.TrySetResult();
+            await state.Release.Task.WaitAsync(cancellationToken);
+        }
+    }
+
     public sealed class RetryState
     {
         private int attempts;
@@ -185,6 +227,12 @@ public sealed class WorkerIntegrationTests
     {
         public TaskCompletionSource Canceled { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    public sealed class DrainState
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     public sealed class TestJobHandler(ProcessingState state) : IJobHandler<TestJob>

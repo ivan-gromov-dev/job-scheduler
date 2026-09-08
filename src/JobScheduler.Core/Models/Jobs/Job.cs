@@ -22,6 +22,12 @@ public sealed record Job
 
     public string? DeduplicationKey { get; init; }
 
+    public string Queue { get; init; } = "default";
+
+    public int Priority { get; init; }
+
+    public string? CorrelationId { get; init; }
+
     public DateTimeOffset? CompletedAt { get; init; }
 
     public static Job Create(
@@ -29,10 +35,14 @@ public sealed record Job
         string payload,
         DateTimeOffset now,
         DateTimeOffset? scheduledAt = null,
-        string? deduplicationKey = null)
+        string? deduplicationKey = null,
+        string queue = "default",
+        int priority = 0,
+        string? correlationId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(type);
         ArgumentNullException.ThrowIfNull(payload);
+        ArgumentException.ThrowIfNullOrWhiteSpace(queue);
 
         return new Job
         {
@@ -42,6 +52,9 @@ public sealed record Job
             EnqueuedAt = now.ToUniversalTime(),
             ScheduledAt = (scheduledAt ?? now).ToUniversalTime(),
             DeduplicationKey = deduplicationKey,
+            Queue = queue,
+            Priority = priority,
+            CorrelationId = correlationId,
         };
     }
 }

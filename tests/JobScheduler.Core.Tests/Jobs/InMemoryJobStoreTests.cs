@@ -1,4 +1,5 @@
 using JobScheduler.Core.Jobs;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace JobScheduler.Core.Tests.Jobs;
 
@@ -172,6 +173,66 @@ public sealed class InMemoryJobStoreTests
         await store.FailAsync(lease!, "bad");
         var replacement = await store.EnqueueAsync("test", "two", options);
         Assert.NotEqual(first.Id, replacement.Id);
+    }
+
+    [Fact]
+    public async Task ClaimsHighestPriorityWithinSelectedQueue()
+    {
+        var store = new InMemoryJobStore(new TestTimeProvider(Start));
+        var other = await store.EnqueueAsync("test", "other", new JobEnqueueOptions { Queue = "slow", Priority = 100 });
+        var low = await store.EnqueueAsync("test", "low", new JobEnqueueOptions { Queue = "fast", Priority = 1 });
+        var high = await store.EnqueueAsync("test", "high", new JobEnqueueOptions
+        {
+            Queue = "fast",
+            Priority = 10,
+            CorrelationId = "request-42",
+        });
+
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1), ["fast"]);
+
+        Assert.Equal(high.Id, lease!.Job.Id);
+        Assert.Equal("request-42", lease.Job.CorrelationId);
+        Assert.NotEqual(other.Id, lease.Job.Id);
+        Assert.NotEqual(low.Id, lease.Job.Id);
+    }
+
+    [Fact]
+    public async Task QueueCapacityAppliesBackpressureAndReleasesAfterCompletion()
+    {
+        var queues = new JobQueueOptions();
+        queues.Capacities["bounded"] = 1;
+        var store = new InMemoryJobStore(new TestTimeProvider(Start), queues);
+        var options = new JobEnqueueOptions { Queue = "bounded" };
+        await store.EnqueueAsync("test", "first", options);
+
+        var exception = await Assert.ThrowsAsync<QueueFullException>(() =>
+            store.EnqueueAsync("test", "second", options).AsTask());
+        Assert.Equal("bounded", exception.Queue);
+        Assert.Equal(1, exception.Capacity);
+
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1));
+        await store.CompleteAsync(lease!);
+        Assert.NotNull(await store.EnqueueAsync("test", "second", options));
+    }
+
+    [Fact]
+    public async Task AdministrationListsFiltersCancelsAndReplays()
+    {
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddJobScheduler();
+        await using var provider = services.BuildServiceProvider();
+        var store = provider.GetRequiredService<IJobStore>();
+        var administration = provider.GetRequiredService<IJobAdministration>();
+        var pending = await store.EnqueueAsync("test", "{}", new JobEnqueueOptions { Queue = "admin" });
+        var dead = await store.EnqueueAsync("test", "dead", new JobEnqueueOptions { Queue = "admin" });
+        var lease = await store.ClaimAsync(TimeSpan.FromMinutes(1), ["admin"]);
+        Assert.Equal(pending.Id, lease!.Job.Id);
+        await store.DeadLetterAsync(lease, new JobFailure(JobFailureKind.Permanent, "bad"));
+
+        Assert.Single(await administration.ListAsync(new JobQuery { Queue = "admin", Status = JobStatus.DeadLettered }));
+        Assert.Equal(dead.Id, (await administration.GetAsync(dead.Id))!.Id);
+        Assert.True(await administration.CancelAsync(dead.Id));
+        Assert.True(await administration.ReplayAsync(pending.Id));
     }
 
     private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
