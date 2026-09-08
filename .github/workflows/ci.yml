@@ -47,6 +47,14 @@ jobs:
       project: tests/JobScheduler.IntegrationTests/JobScheduler.IntegrationTests.csproj
       artifact: coverage-worker-integration
 
+  release-tests:
+    name: Compatibility, Performance, and Soak Tests
+    needs: build
+    uses: ./.github/workflows/test-project.yml
+    with:
+      project: tests/JobScheduler.ReleaseTests/JobScheduler.ReleaseTests.csproj
+      artifact: coverage-release
+
   postgresql-integration-tests:
     name: PostgreSQL Integration Tests
     needs: build
@@ -92,7 +100,7 @@ jobs:
 
   coverage:
     name: Coverage
-    needs: [unit-tests, worker-integration-tests, postgresql-integration-tests]
+    needs: [unit-tests, worker-integration-tests, postgresql-integration-tests, release-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -110,12 +118,12 @@ jobs:
       - name: Enforce aggregate coverage
         run: >-
           dotnet run --project tools/JobScheduler.Harness --
-          coverage --results-root artifacts/coverage --expected-reports 3
+          coverage --results-root artifacts/coverage --expected-reports 4
 
   ci-success:
     name: CI Success
     if: always()
-    needs: [build, unit-tests, worker-integration-tests, postgresql-integration-tests, coverage]
+    needs: [build, unit-tests, worker-integration-tests, postgresql-integration-tests, release-tests, coverage]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all CI jobs passed
@@ -124,10 +132,12 @@ jobs:
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           WORKER_RESULT: ${{ needs.worker-integration-tests.result }}
           POSTGRESQL_RESULT: ${{ needs.postgresql-integration-tests.result }}
+          RELEASE_RESULT: ${{ needs.release-tests.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
         run: |
           test "$BUILD_RESULT" = "success"
           test "$UNIT_RESULT" = "success"
           test "$WORKER_RESULT" = "success"
           test "$POSTGRESQL_RESULT" = "success"
+          test "$RELEASE_RESULT" = "success"
           test "$COVERAGE_RESULT" = "success"

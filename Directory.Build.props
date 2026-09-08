@@ -6,5 +6,23 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <Authors>Ivan Gromov</Authors>
+    <Company>Job Scheduler contributors</Company>
+    <Description>Reliable at-least-once job processing and recurring scheduling for .NET.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Djunichi/job-scheduler</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Djunichi/job-scheduler.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 </Project>
